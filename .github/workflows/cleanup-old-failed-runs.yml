@@ -1,0 +1,86 @@
+name: Cleanup old failed Actions runs
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_delete:
+        description: "Set to yes to permanently delete matching failed runs"
+        required: true
+        type: choice
+        options:
+          - "no"
+          - "yes"
+        default: "no"
+      older_than_days:
+        description: "Delete failed runs older than this many days"
+        required: true
+        type: number
+        default: 30
+
+permissions:
+  actions: write
+
+jobs:
+  cleanup:
+    name: Delete confirmed old failed runs
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Validate request and delete old failed runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CONFIRM_DELETE: ${{ inputs.confirm_delete }}
+          OLDER_THAN_DAYS: ${{ inputs.older_than_days }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "$CONFIRM_DELETE" != "yes" ]]; then
+            echo "Safety check: confirmation was not set to yes. Nothing was deleted."
+            exit 0
+          fi
+
+          if ! [[ "$OLDER_THAN_DAYS" =~ ^[0-9]+$ ]] || (( OLDER_THAN_DAYS < 1 || OLDER_THAN_DAYS > 3650 )); then
+            echo "older_than_days must be an integer between 1 and 3650."
+            exit 1
+          fi
+
+          python - <<'PY'
+          import datetime as dt
+          import json
+          import os
+          import subprocess
+          import sys
+
+          days = int(os.environ["OLDER_THAN_DAYS"])
+          cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days)
+
+          result = subprocess.run(
+              [
+                  "gh", "run", "list",
+                  "--repo", os.environ["GITHUB_REPOSITORY"],
+                  "--status", "failure",
+                  "--limit", "1000",
+                  "--json", "databaseId,createdAt",
+              ],
+              check=True, capture_output=True, text=True,
+          )
+          runs = json.loads(result.stdout)
+          old_runs = []
+          for run in runs:
+              created = dt.datetime.fromisoformat(run["createdAt"].replace("Z", "+00:00"))
+              if created < cutoff:
+                  old_runs.append(run["databaseId"])
+
+          print(f"Found {len(old_runs)} failed run(s) older than {days} days.")
+          deleted = 0
+          for run_id in old_runs:
+              subprocess.run(
+                  ["gh", "run", "delete", str(run_id), "--repo", os.environ["GITHUB_REPOSITORY"]],
+                  check=True,
+              )
+              deleted += 1
+              print(f"Deleted failed run {run_id}")
+
+          print(f"Cleanup complete: deleted {deleted} old failed run(s).")
+          PY
