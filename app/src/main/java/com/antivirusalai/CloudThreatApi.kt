@@ -23,7 +23,7 @@ object CloudThreatApi {
                 throw IllegalStateException("Cloud API returned HTTP $status.")
             }
             val body = connection.inputStream.bufferedReader().use { it.readText() }
-            if (!body.contains("\\"ok\\":true") || !body.contains("ANTIVIRUS AL AI API")) {
+            if (!body.contains("\"ok\":true") || !body.contains("ANTIVIRUS AL AI API")) {
                 throw IllegalStateException("Cloud API returned an unexpected response.")
             }
             "اتصال امن به API ابری برقرار است. | Cloud API connected securely."
