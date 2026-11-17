@@ -24,7 +24,8 @@ android {
         applicationId = "com.antivirusalai"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
+        // CI supplies a monotonically increasing value for each workflow run.
+        versionCode = providers.environmentVariable("ALAI_VERSION_CODE").orElse("2").get().toInt()
         versionName = "0.2.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
