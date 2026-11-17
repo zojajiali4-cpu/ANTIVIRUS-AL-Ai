@@ -3,6 +3,9 @@ package com.antivirusalai.engine
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
+import com.antivirusalai.intel.FeedValidationException
+import com.antivirusalai.intel.ThreatClassification
+import com.antivirusalai.intel.ThreatFeedRuntime
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -70,6 +73,17 @@ object ScanEngine {
                 "%02x".format(it.toInt() and 0xff)
             }
             val evidence = mutableListOf<ScanEvidence>()
+            val threatMatch = try {
+                ThreatFeedRuntime.lookup(context.applicationContext, hash)
+            } catch (error: FeedValidationException) {
+                evidence += ScanEvidence(
+                    "SIGNED_THREAT_FEED_UNAVAILABLE",
+                    "Signed threat database unavailable",
+                    "The stored threat feed could not be trusted (${error.code}). No clean verdict will be inferred from this failure.",
+                    EvidenceSeverity.MEDIUM
+                )
+                null
+            }
             val localMatch = LocalIndicatorDatabase.lookup(hash)
             val looksLikeApk = ApkFileDetector.isApkArchive(temp) ||
                 displayName.endsWith(".apk", ignoreCase = true) ||
@@ -77,6 +91,24 @@ object ScanEngine {
             val apk = if (looksLikeApk) ApkMetadataInspector.inspect(context, temp) else null
 
             val verdict = when {
+                threatMatch != null -> {
+                    val label = when (threatMatch.classification) {
+                        ThreatClassification.MALWARE -> "Known malware"
+                        ThreatClassification.PUA -> "Potentially unwanted application"
+                        ThreatClassification.SUSPICIOUS -> "Known suspicious file"
+                    }
+                    evidence += ScanEvidence(
+                        "SIGNED_THREAT_MATCH",
+                        label,
+                        "SHA-256 matched signed threat-feed family ${threatMatch.familyId}. Classification: ${threatMatch.classification}.",
+                        EvidenceSeverity.HIGH
+                    )
+                    when (threatMatch.classification) {
+                        ThreatClassification.MALWARE -> ScanVerdict.KNOWN_MALWARE
+                        ThreatClassification.PUA -> ScanVerdict.KNOWN_PUA
+                        ThreatClassification.SUSPICIOUS -> ScanVerdict.KNOWN_SUSPICIOUS
+                    }
+                }
                 localMatch != null -> {
                     evidence += ScanEvidence(
                         "BENIGN_PROJECT_TEST_MARKER",
