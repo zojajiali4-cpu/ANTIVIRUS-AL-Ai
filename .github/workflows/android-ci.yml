@@ -23,6 +23,7 @@ jobs:
       ALAI_RELEASE_STORE_PASSWORD: ${{ secrets.ALAI_RELEASE_STORE_PASSWORD }}
       ALAI_RELEASE_KEY_ALIAS: ${{ secrets.ALAI_RELEASE_KEY_ALIAS }}
       ALAI_RELEASE_KEY_PASSWORD: ${{ secrets.ALAI_RELEASE_KEY_PASSWORD }}
+      ALAI_VERSION_CODE: ${{ github.run_number }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -50,7 +51,7 @@ jobs:
           {
             echo "app=ANTIVIRUS AL AI"
             echo "version=0.2.0"
-            echo "version_code=2"
+            echo "version_code=${ALAI_VERSION_CODE}"
             echo "commit=${GITHUB_SHA}"
             echo "workflow_run=${GITHUB_RUN_ID}"
           } > app/build/outputs/apk/debug/build-info.txt
@@ -93,7 +94,7 @@ jobs:
         if: ${{ env.ALAI_RELEASE_KEYSTORE_BASE64 != '' && env.ALAI_RELEASE_STORE_PASSWORD != '' && env.ALAI_RELEASE_KEY_ALIAS != '' && env.ALAI_RELEASE_KEY_PASSWORD != '' }}
         uses: actions/upload-artifact@v4
         with:
-          name: antivirus-al-ai-v0.2.0-release-signed
+          name: antivirus-al-ai-release-${{ github.run_number }}
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 30
