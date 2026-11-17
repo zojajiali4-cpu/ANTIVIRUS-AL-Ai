@@ -55,8 +55,11 @@ object ThreatFeedRuntime {
     /** Downloads only the signed feed bytes; it never uploads files or hashes. */
     suspend fun refresh(context: Context): ThreatFeedRefreshResult {
         val endpoint = BuildConfig.ALAI_THREAT_FEED_URL.trim()
-        val feedStore = store(context)
-            ?: return ThreatFeedRefreshResult.NotConfigured
+        val feedStore = try {
+            store(context)
+        } catch (_: Exception) {
+            return ThreatFeedRefreshResult.Failed("Pinned threat-feed public key configuration is invalid.")
+        } ?: return ThreatFeedRefreshResult.NotConfigured
         if (endpoint.isEmpty()) return ThreatFeedRefreshResult.NotConfigured
 
         val connection = try {
