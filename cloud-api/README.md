@@ -1,1 +1,9 @@
-# ANTIVIRUS AL AI Cloud API\n\nCloudflare Worker API with D1 reputation metadata. Android remains local-first; raw files are never accepted or uploaded.\n\nEndpoints: GET /v1/health; POST /v1/url/check; POST /v1/hash/reputation; GET /v1/threat-feed/latest; POST /v1/admin/feed (Bearer ADMIN_API_KEY).\n\nSecurity: HTTPS, 64 KiB request cap (2 MiB for protected feed publishing), hashed-IP rate limiting, parameterized SQL, no URL fetching, no raw file uploads, and no admin secret in the Android app. The feed is stored as opaque signed bytes; the Android app must verify it with its pinned public key before installing.\n\nDeploy with Wrangler and set ADMIN_API_KEY using the Worker secret manager. Set Android ALAI_API_BASE_URL to the deployed Worker URL; never embed the admin key in the APK.\n
+# ANTIVIRUS AL AI Cloud API
+
+Cloudflare Worker API with D1 reputation metadata. Android remains local-first; raw files are never accepted or uploaded.
+
+Endpoints: GET /v1/health; POST /v1/url/check; POST /v1/hash/reputation; GET /v1/threat-feed/latest; POST /v1/admin/feed (Bearer ADMIN_API_KEY).
+
+Security: HTTPS, 64 KiB request cap (2 MiB for protected feed publishing), hashed-IP rate limiting, parameterized SQL, no URL fetching, no raw file uploads, and no admin secret in the Android app. The feed is stored as opaque signed bytes; the Android app must verify it with its pinned public key before installing.
+
+Deploy with Wrangler and set ADMIN_API_KEY using the Worker secret manager. Set Android ALAI_API_BASE_URL to the deployed Worker URL; never embed the admin key in the APK.
