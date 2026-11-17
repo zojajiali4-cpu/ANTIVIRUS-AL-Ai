@@ -31,6 +31,7 @@ android {
         buildConfigField("String", "ALAI_THREAT_FEED_URL", "\"${providers.environmentVariable("ALAI_THREAT_FEED_URL").orElse("").get()}\"")
         buildConfigField("String", "ALAI_THREAT_FEED_PUBLIC_KEY_B64", "\"${providers.environmentVariable("ALAI_THREAT_FEED_PUBLIC_KEY_B64").orElse("").get()}\"")
         buildConfigField("String", "ALAI_THREAT_FEED_KEY_ID", "\"${providers.environmentVariable("ALAI_THREAT_FEED_KEY_ID").orElse("alai-feed-2026").get()}\"")
+        buildConfigField("String", "ALAI_API_BASE_URL", "\"${providers.environmentVariable("ALAI_API_BASE_URL").orElse("https://antivirus-al-ai-api.zojajiali4.workers.dev").get()}\"")
     }
     signingConfigs {
         if (hasReleaseSigning) {
