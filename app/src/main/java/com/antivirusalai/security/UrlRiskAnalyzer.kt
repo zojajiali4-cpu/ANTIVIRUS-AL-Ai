@@ -78,7 +78,7 @@ object UrlRiskAnalyzer {
     private fun isIpLiteral(host: String): Boolean {
         if (host.contains(':')) return true
         val parts = host.split('.')
-        return parts.size == 4 && parts.all { it.toIntOrNull() in 0..255 }
+        return parts.size == 4 && parts.all { part -> part.toIntOrNull()?.let { value -> value in 0..255 } == true }
     }
 
     private fun invalid(code: String, explanation: String) =
