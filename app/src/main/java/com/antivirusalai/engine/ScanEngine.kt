@@ -83,6 +83,14 @@ object ScanEngine {
                     EvidenceSeverity.MEDIUM
                 )
                 null
+            } catch (_: Exception) {
+                evidence += ScanEvidence(
+                    "SIGNED_THREAT_FEED_CONFIGURATION_ERROR",
+                    "Signed threat database not usable",
+                    "The configured trust key or local feed could not be loaded. No clean verdict will be inferred from this failure.",
+                    EvidenceSeverity.MEDIUM
+                )
+                null
             }
             val localMatch = LocalIndicatorDatabase.lookup(hash)
             val looksLikeApk = ApkFileDetector.isApkArchive(temp) ||
