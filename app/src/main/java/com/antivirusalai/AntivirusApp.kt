@@ -119,6 +119,7 @@ fun AntivirusApp() {
     var feedMessage by remember { mutableStateOf<String?>(null) }
     var cloudChecking by remember { mutableStateOf(false) }
     var cloudMessage by remember { mutableStateOf<String?>(null) }
+    val fa = language == "fa"
     val checkCloudApi: () -> Unit = {
         if (!cloudChecking) {
             cloudChecking = true
@@ -133,7 +134,6 @@ fun AntivirusApp() {
             }
         }
     }
-    val fa = language == "fa"
 
     val refreshThreatFeed: () -> Unit = {
         if (!feedUpdating) {
@@ -1674,7 +1674,7 @@ private fun SettingsScreen(
             InfoBanner(
                 title = tr(fa, "وضعیت API ابری", "Cloud API status"),
                 body = cloudMessage,
-                warning = !cloudMessage.contains("موفق") && !cloudMessage.contains("connected")
+                warning = !cloudMessage.contains("برقرار") && !cloudMessage.contains("connected")
             )
         }
         SettingsRow(
