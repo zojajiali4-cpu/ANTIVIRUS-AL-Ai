@@ -70,9 +70,13 @@ import com.antivirusalai.engine.ScanEngine
 import com.antivirusalai.engine.ScanResult
 import com.antivirusalai.engine.ScanTooLargeException
 import com.antivirusalai.engine.ScanVerdict
+import com.antivirusalai.intel.ThreatFeedRefreshResult
+import com.antivirusalai.intel.ThreatFeedRuntime
 import com.antivirusalai.remediation.QuarantineManager
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private val AppBackground = Color(0xFF07111E)
 private val SurfaceBase = Color(0xFF101D2D)
@@ -111,7 +115,38 @@ fun AntivirusApp() {
     var featureInfo by remember { mutableStateOf<String?>(null) }
     var showPrivacy by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
+    var feedUpdating by remember { mutableStateOf(false) }
+    var feedMessage by remember { mutableStateOf<String?>(null) }
     val fa = language == "fa"
+
+    val refreshThreatFeed: () -> Unit = {
+        if (!feedUpdating) {
+            feedUpdating = true
+            scope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    ThreatFeedRuntime.refresh(context.applicationContext)
+                }
+                feedMessage = when (result) {
+                    ThreatFeedRefreshResult.NotConfigured -> tr(
+                        fa,
+                        "بانک تهدید هنوز پیکربندی نشده است؛ کلید عمومی و نشانی HTTPS باید در نسخه انتشار ثبت شوند.",
+                        "Threat feed is not configured yet; the release must provide its pinned public key and HTTPS endpoint."
+                    )
+                    is ThreatFeedRefreshResult.Updated -> tr(
+                        fa,
+                        "بانک تهدید با موفقیت به نسخه ${result.version} به‌روزرسانی شد؛ ${result.indicatorCount} نشانگر معتبر.",
+                        "Threat feed updated to version ${result.version}; ${result.indicatorCount} verified indicators."
+                    )
+                    is ThreatFeedRefreshResult.Failed -> tr(
+                        fa,
+                        "به‌روزرسانی رد شد: ${result.reason}",
+                        "Update rejected: ${result.reason}"
+                    )
+                }
+                feedUpdating = false
+            }
+        }
+    }
 
     val picker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -275,7 +310,10 @@ fun AntivirusApp() {
                                 onLanguageChange = { language = if (fa) "en" else "fa" },
                                 onPrivacy = { showPrivacy = true },
                                 onAbout = { showAbout = true },
-                                onFeature = { featureInfo = it }
+                                onFeature = { featureInfo = it },
+                                feedUpdating = feedUpdating,
+                                feedMessage = feedMessage,
+                                onUpdateThreatFeed = refreshThreatFeed
                             )
                         }
 
@@ -1568,7 +1606,10 @@ private fun SettingsScreen(
     onLanguageChange: () -> Unit,
     onPrivacy: () -> Unit,
     onAbout: () -> Unit,
-    onFeature: (String) -> Unit
+    onFeature: (String) -> Unit,
+    feedUpdating: Boolean,
+    feedMessage: String?,
+    onUpdateThreatFeed: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -1583,6 +1624,22 @@ private fun SettingsScreen(
             action = if (fa) "EN" else "فا",
             onClick = onLanguageChange
         )
+
+        SettingsRow(
+            icon = "shield",
+            title = tr(fa, "به‌روزرسانی بانک تهدید", "Update threat database"),
+            description = if (feedUpdating) tr(fa, "در حال دریافت و اعتبارسنجی امضای دیجیتال…", "Downloading and verifying digital signature…")
+                else tr(fa, "دریافت فقط بانک امضاشده؛ بدون ارسال فایل یا هش", "Downloads only the signed feed; no file or hash upload"),
+            action = if (feedUpdating) "…" else "↻",
+            onClick = onUpdateThreatFeed
+        )
+        if (feedMessage != null) {
+            InfoBanner(
+                title = tr(fa, "وضعیت بانک تهدید", "Threat database status"),
+                body = feedMessage,
+                warning = !feedMessage.contains("موفقیت") && !feedMessage.contains("updated")
+            )
+        }
         SettingsRow(
             icon = "lock",
             title = tr(fa, "حریم خصوصی و داده‌ها", "Privacy and data"),
@@ -1937,6 +1994,9 @@ private fun IconArt(
 }
 
 private fun verdictBadge(verdict: ScanVerdict, fa: Boolean): String = when (verdict) {
+    ScanVerdict.KNOWN_MALWARE -> tr(fa, "بدافزار شناخته‌شده", "KNOWN MALWARE")
+    ScanVerdict.KNOWN_PUA -> tr(fa, "برنامه ناخواسته", "KNOWN PUA")
+    ScanVerdict.KNOWN_SUSPICIOUS -> tr(fa, "تهدید مشکوک", "KNOWN SUSPICIOUS")
     ScanVerdict.TEST_MARKER_MATCH -> tr(fa, "آزمایشی", "TEST")
     ScanVerdict.SUSPICIOUS -> tr(fa, "نیازمند بررسی", "REVIEW")
     ScanVerdict.NO_KNOWN_INDICATOR -> tr(fa, "بدون تطبیق", "NO MATCH")
@@ -1945,6 +2005,9 @@ private fun verdictBadge(verdict: ScanVerdict, fa: Boolean): String = when (verd
 }
 
 private fun verdictTitle(verdict: ScanVerdict, fa: Boolean): String = when (verdict) {
+    ScanVerdict.KNOWN_MALWARE -> tr(fa, "بدافزار شناخته‌شده شناسایی شد", "Known malware detected")
+    ScanVerdict.KNOWN_PUA -> tr(fa, "برنامه بالقوه ناخواسته شناسایی شد", "Potentially unwanted app detected")
+    ScanVerdict.KNOWN_SUSPICIOUS -> tr(fa, "فایل مشکوک در بانک تهدید ثبت شده است", "Known suspicious file detected")
     ScanVerdict.TEST_MARKER_MATCH -> tr(fa, "نشانگر آزمایشی بی‌خطر شناسایی شد", "Benign test marker matched")
     ScanVerdict.SUSPICIOUS -> tr(fa, "نیازمند بررسی بیشتر", "Needs further review")
     ScanVerdict.NO_KNOWN_INDICATOR -> tr(fa, "نشانگر شناخته‌شده‌ای پیدا نشد", "No known indicator found")
@@ -1953,6 +2016,9 @@ private fun verdictTitle(verdict: ScanVerdict, fa: Boolean): String = when (verd
 }
 
 private fun verdictDescription(verdict: ScanVerdict, fa: Boolean): String = when (verdict) {
+    ScanVerdict.KNOWN_MALWARE -> tr(fa, "هش SHA-256 فایل با یک نشانگر بدافزار در بانک تهدید امضاشده تطبیق دارد. فایل را اجرا نکنید.", "The file SHA-256 matches a malware indicator in the signed threat feed. Do not run it.")
+    ScanVerdict.KNOWN_PUA -> tr(fa, "هش فایل با یک برنامه بالقوه ناخواسته در بانک امضاشده تطبیق دارد؛ پیش از استفاده بررسی کنید.", "The file matches a potentially unwanted application in the signed feed; review before use.")
+    ScanVerdict.KNOWN_SUSPICIOUS -> tr(fa, "هش فایل در بانک امضاشده به‌عنوان مشکوک ثبت شده است؛ این برچسب به‌تنهایی اثبات قطعی بدافزار نیست.", "The signed feed marks this file as suspicious; this label alone is not definitive proof of malware.")
     ScanVerdict.TEST_MARKER_MATCH -> tr(fa, "این فقط فایل آزمایشی بی‌خطر پروژه است؛ بدافزار نیست.", "This is the harmless project test fixture, not malware.")
     ScanVerdict.SUSPICIOUS -> tr(fa, "چند نشانه ایستا دیده شده است. این نتیجه اثبات بدافزار بودن نیست.", "Static indicators were found. This is not proof of malware.")
     ScanVerdict.NO_KNOWN_INDICATOR -> tr(fa, "هیچ نشانگر موجود در نسخه فعلی با فایل تطبیق نکرد. این نتیجه تضمین پاک بودن نیست.", "No indicator in this MVP matched. This does not guarantee that the file is safe.")
@@ -1961,6 +2027,8 @@ private fun verdictDescription(verdict: ScanVerdict, fa: Boolean): String = when
 }
 
 private fun verdictColor(verdict: ScanVerdict): Color = when (verdict) {
+    ScanVerdict.KNOWN_MALWARE -> ColorDanger
+    ScanVerdict.KNOWN_PUA, ScanVerdict.KNOWN_SUSPICIOUS -> ColorWarning
     ScanVerdict.TEST_MARKER_MATCH -> BrandBlue
     ScanVerdict.SUSPICIOUS -> ColorWarning
     ScanVerdict.NO_KNOWN_INDICATOR -> BrandTeal
