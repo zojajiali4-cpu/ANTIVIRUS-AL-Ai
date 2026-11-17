@@ -1,0 +1,1 @@
+name = "antivirus-al-ai-api"\nmain = "src/index.js"\ncompatibility_date = "2026-11-18"\nworkers_dev = true\n\n[[d1_databases]]\nbinding = "DB"\ndatabase_name = "antivirus-al-ai-threat-intel"\ndatabase_id = "ba528591-877f-4683-a611-266d1a472b2e"\n
