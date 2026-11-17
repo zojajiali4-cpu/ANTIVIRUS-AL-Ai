@@ -2,7 +2,7 @@ name: Android CI
 
 on:
   push:
-    branches: [main, "feature/cloud-safe-cleaner-signing-v1"]
+    branches: [main, "feature/cloud-safe-cleaner-signing-v1", "feature/url-risk-analysis-foundation"]
   pull_request:
   workflow_dispatch:
 
