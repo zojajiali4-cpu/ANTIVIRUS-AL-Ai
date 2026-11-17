@@ -2,7 +2,7 @@ name: Android CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, "feature/cloud-safe-cleaner-signing-v1"]
   pull_request:
   workflow_dispatch:
 
@@ -18,6 +18,11 @@ jobs:
     name: Build, unit tests, and lint
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      ALAI_RELEASE_KEYSTORE_BASE64: ${{ secrets.ALAI_RELEASE_KEYSTORE_BASE64 }}
+      ALAI_RELEASE_STORE_PASSWORD: ${{ secrets.ALAI_RELEASE_STORE_PASSWORD }}
+      ALAI_RELEASE_KEY_ALIAS: ${{ secrets.ALAI_RELEASE_KEY_ALIAS }}
+      ALAI_RELEASE_KEY_PASSWORD: ${{ secrets.ALAI_RELEASE_KEY_PASSWORD }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -59,3 +64,40 @@ jobs:
             app/build/outputs/apk/debug/build-info.txt
           if-no-files-found: error
           retention-days: 14
+
+      - name: Prepare protected release keystore
+        if: ${{ env.ALAI_RELEASE_KEYSTORE_BASE64 != '' && env.ALAI_RELEASE_STORE_PASSWORD != '' && env.ALAI_RELEASE_KEY_ALIAS != '' && env.ALAI_RELEASE_KEY_PASSWORD != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEYSTORE_PATH="$RUNNER_TEMP/alai-release-upload.jks"
+          printf '%s' "$ALAI_RELEASE_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          chmod 600 "$KEYSTORE_PATH"
+          echo "ALAI_RELEASE_STORE_FILE=$KEYSTORE_PATH" >> "$GITHUB_ENV"
+
+      - name: Build signed release APK
+        if: ${{ env.ALAI_RELEASE_KEYSTORE_BASE64 != '' && env.ALAI_RELEASE_STORE_PASSWORD != '' && env.ALAI_RELEASE_KEY_ALIAS != '' && env.ALAI_RELEASE_KEY_PASSWORD != '' }}
+        run: gradle --no-daemon assembleRelease
+
+      - name: Verify release APK signature
+        if: ${{ env.ALAI_RELEASE_KEYSTORE_BASE64 != '' && env.ALAI_RELEASE_STORE_PASSWORD != '' && env.ALAI_RELEASE_KEY_ALIAS != '' && env.ALAI_RELEASE_KEY_PASSWORD != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/release/app-release.apk"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
+          test -n "$APKSIGNER"
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
+
+      - name: Upload verified release APK
+        if: ${{ env.ALAI_RELEASE_KEYSTORE_BASE64 != '' && env.ALAI_RELEASE_STORE_PASSWORD != '' && env.ALAI_RELEASE_KEY_ALIAS != '' && env.ALAI_RELEASE_KEY_PASSWORD != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: antivirus-al-ai-v0.2.0-release-signed
+          path: app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Explain release signing was not run
+        if: ${{ env.ALAI_RELEASE_KEYSTORE_BASE64 == '' || env.ALAI_RELEASE_STORE_PASSWORD == '' || env.ALAI_RELEASE_KEY_ALIAS == '' || env.ALAI_RELEASE_KEY_PASSWORD == '' }}
+        run: echo "Release signing skipped because one or more ALAI release GitHub Actions secrets are not configured. Debug validation still runs."
