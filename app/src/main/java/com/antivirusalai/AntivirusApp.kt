@@ -117,6 +117,22 @@ fun AntivirusApp() {
     var showAbout by remember { mutableStateOf(false) }
     var feedUpdating by remember { mutableStateOf(false) }
     var feedMessage by remember { mutableStateOf<String?>(null) }
+    var cloudChecking by remember { mutableStateOf(false) }
+    var cloudMessage by remember { mutableStateOf<String?>(null) }
+    val checkCloudApi: () -> Unit = {
+        if (!cloudChecking) {
+            cloudChecking = true
+            scope.launch {
+                cloudMessage = try {
+                    withContext(Dispatchers.IO) { CloudThreatApi.health() }
+                } catch (error: Exception) {
+                    tr(fa, "اتصال ابری برقرار نشد: ${error.message ?: "خطای شبکه"}", "Cloud API unavailable: ${error.message ?: "network error"}")
+                } finally {
+                    cloudChecking = false
+                }
+            }
+        }
+    }
     val fa = language == "fa"
 
     val refreshThreatFeed: () -> Unit = {
@@ -313,7 +329,10 @@ fun AntivirusApp() {
                                 onFeature = { featureInfo = it },
                                 feedUpdating = feedUpdating,
                                 feedMessage = feedMessage,
-                                onUpdateThreatFeed = refreshThreatFeed
+                                onUpdateThreatFeed = refreshThreatFeed,
+                                cloudChecking = cloudChecking,
+                                cloudMessage = cloudMessage,
+                                onCheckCloudApi = checkCloudApi
                             )
                         }
 
@@ -1609,7 +1628,10 @@ private fun SettingsScreen(
     onFeature: (String) -> Unit,
     feedUpdating: Boolean,
     feedMessage: String?,
-    onUpdateThreatFeed: () -> Unit
+    onUpdateThreatFeed: () -> Unit,
+    cloudChecking: Boolean,
+    cloudMessage: String?,
+    onCheckCloudApi: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -1638,6 +1660,21 @@ private fun SettingsScreen(
                 title = tr(fa, "وضعیت بانک تهدید", "Threat database status"),
                 body = feedMessage,
                 warning = !feedMessage.contains("موفقیت") && !feedMessage.contains("updated")
+            )
+        }
+        SettingsRow(
+            icon = "activity",
+            title = tr(fa, "اتصال هوش ابری", "Cloud intelligence API"),
+            description = if (cloudChecking) tr(fa, "در حال بررسی اتصال امن…", "Checking secure connection…")
+                else tr(fa, "بررسی ارتباط با سرور تهدید؛ بدون ارسال فایل", "Check threat server connectivity; no file upload"),
+            action = if (cloudChecking) "…" else "↗",
+            onClick = onCheckCloudApi
+        )
+        if (cloudMessage != null) {
+            InfoBanner(
+                title = tr(fa, "وضعیت API ابری", "Cloud API status"),
+                body = cloudMessage,
+                warning = !cloudMessage.contains("موفق") && !cloudMessage.contains("connected")
             )
         }
         SettingsRow(
