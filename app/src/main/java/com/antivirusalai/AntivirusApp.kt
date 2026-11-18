@@ -43,6 +43,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -1836,7 +1837,7 @@ private fun UrlRiskCheckCard(fa: Boolean) {
             }
 
             localAssessment?.let { result ->
-                Divider(color = SurfaceSoft)
+                HorizontalDivider(color = SurfaceSoft)
                 Text(
                     tr(fa, "تحلیل محلی: ", "On-device analysis: ") + result.level.name,
                     color = localTint,
