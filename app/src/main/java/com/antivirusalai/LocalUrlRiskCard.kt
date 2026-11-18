@@ -14,6 +14,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -31,7 +32,7 @@ import com.antivirusalai.security.UrlRiskLevel
 @Composable
 fun LocalUrlRiskCard(fa: Boolean) {
     var address by rememberSaveable { mutableStateOf("") }
-    var assessment by rememberSaveable { mutableStateOf<UrlRiskAssessment?>(null) }
+    var assessment by remember { mutableStateOf<UrlRiskAssessment?>(null) }
 
     val result = assessment
     val accent = when (result?.level) {
