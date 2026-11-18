@@ -186,6 +186,8 @@ fun AntivirusApp() {
                     if (scanResult?.sha256 == selectedHash) {
                         hashLookupResult = result
                     }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
                 } catch (error: Exception) {
                     if (scanResult?.sha256 == selectedHash) {
                         hashLookupMessage = tr(
