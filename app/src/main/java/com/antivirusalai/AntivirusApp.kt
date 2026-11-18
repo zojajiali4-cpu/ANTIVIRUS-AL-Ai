@@ -48,6 +48,7 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -90,6 +91,9 @@ import com.antivirusalai.engine.ScanVerdict
 import com.antivirusalai.intel.ThreatFeedRefreshResult
 import com.antivirusalai.intel.ThreatFeedRuntime
 import com.antivirusalai.remediation.QuarantineManager
+import com.antivirusalai.security.UrlRiskAnalyzer
+import com.antivirusalai.security.UrlRiskAssessment
+import com.antivirusalai.security.UrlRiskLevel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -1723,6 +1727,157 @@ private fun DetailLine(label: String, value: String) {
 }
 
 @Composable
+private fun UrlRiskCheckCard(fa: Boolean) {
+    val scope = rememberCoroutineScope()
+    var address by rememberSaveable { mutableStateOf("") }
+    var checking by remember { mutableStateOf(false) }
+    var localAssessment by remember { mutableStateOf<UrlRiskAssessment?>(null) }
+    var cloudAssessment by remember { mutableStateOf<CloudUrlCheckResult?>(null) }
+    var cloudMessage by remember { mutableStateOf<String?>(null) }
+
+    val runCheck: () -> Unit = {
+        val assessment = UrlRiskAnalyzer.analyze(address)
+        localAssessment = assessment
+        cloudAssessment = null
+        cloudMessage = null
+        if (assessment.level == UrlRiskLevel.INVALID) {
+            cloudMessage = tr(fa, "نشانی معتبر نیست؛ استعلام ابری انجام نشد.", "Invalid address; cloud lookup was not sent.")
+        } else if (!checking) {
+            checking = true
+            scope.launch {
+                try {
+                    cloudAssessment = withContext(Dispatchers.IO) {
+                        CloudThreatApi.checkUrl(assessment.normalizedUrl ?: address)
+                    }
+                } catch (error: Exception) {
+                    cloudMessage = tr(
+                        fa,
+                        "استعلام ابری در دسترس نیست: " + (error.message ?: "خطای شبکه"),
+                        "Cloud lookup unavailable: " + (error.message ?: "network error")
+                    )
+                } finally {
+                    checking = false
+                }
+            }
+        }
+    }
+
+    val localTint = when (localAssessment?.level) {
+        UrlRiskLevel.HIGH_RISK_STRUCTURE, UrlRiskLevel.INVALID -> ColorDanger
+        UrlRiskLevel.CAUTION -> ColorWarning
+        UrlRiskLevel.NO_STRUCTURAL_WARNING -> BrandTeal
+        null -> TextSecondary
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = SurfaceBase)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(9.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconArt("link", tint = BrandTeal, size = 19.dp)
+                Text(
+                    tr(fa, "بررسی لینک و اعتبار دامنه", "URL & domain reputation"),
+                    color = TextPrimary,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp
+                )
+            }
+            Text(
+                tr(
+                    fa,
+                    "نشانی را خودت وارد کن. اول ساختار آن روی گوشی بررسی می‌شود؛ سپس فقط همین URL برای استعلام اعتبار به API ارسال می‌شود.",
+                    "Enter an address manually. Structure is checked on-device; only this URL is sent for an optional cloud reputation lookup."
+                ),
+                color = TextSecondary,
+                fontSize = 11.sp,
+                lineHeight = 16.sp
+            )
+            OutlinedTextField(
+                value = address,
+                onValueChange = { address = it.take(2048) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                enabled = !checking,
+                label = { Text(tr(fa, "https://example.com", "https://example.com")) },
+                placeholder = { Text(tr(fa, "نشانی وب را وارد کن", "Enter a web address")) }
+            )
+            Button(
+                onClick = runCheck,
+                enabled = address.isNotBlank() && !checking,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(if (checking) tr(fa, "در حال استعلام…", "Checking…") else tr(fa, "بررسی لینک", "Check URL"))
+            }
+
+            localAssessment?.let { result ->
+                Divider(color = SurfaceSoft)
+                Text(
+                    tr(fa, "تحلیل محلی: ", "On-device analysis: ") + result.level.name,
+                    color = localTint,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                result.signals.forEach { signal ->
+                    Text(
+                        signal.code + " — " + signal.explanation,
+                        color = TextSecondary,
+                        fontSize = 10.sp,
+                        lineHeight = 15.sp
+                    )
+                }
+                if (result.signals.isEmpty()) {
+                    Text(
+                        tr(fa, "هشدار ساختاری مشخصی پیدا نشد؛ این تأییدِ امن بودن سایت نیست.", "No structural warning found; this is not a safety certification."),
+                        color = TextSecondary,
+                        fontSize = 10.sp
+                    )
+                }
+            }
+            cloudAssessment?.let { result ->
+                val cloudTint = when (result.reputationClassification?.uppercase()) {
+                    "MALWARE", "PHISHING" -> ColorDanger
+                    "SUSPICIOUS", "PUA" -> ColorWarning
+                    else -> BrandTeal
+                }
+                Text(
+                    tr(fa, "پاسخ API ابری: ", "Cloud API response: ") + result.level,
+                    color = cloudTint,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    result.reputationClassification?.let { classification ->
+                        tr(fa, "رکورد اعتبار: ", "Reputation record: ") + classification +
+                            (result.reputationSource?.let { " · " + it } ?: "")
+                    } ?: tr(fa, "رکورد اعتبار منطبق پیدا نشد؛ وضعیت نامشخص است.", "No matching reputation record; status is unknown."),
+                    color = if (result.reputationClassification == null) ColorWarning else cloudTint,
+                    fontSize = 10.sp
+                )
+                result.disclaimer?.let {
+                    Text(it, color = TextTertiary, fontSize = 9.sp)
+                }
+            }
+            cloudMessage?.let {
+                Text(it, color = ColorWarning, fontSize = 10.sp)
+            }
+            Text(
+                tr(fa, "این ابزار URL را باز یا دانلود نمی‌کند و جایگزین تشخیص قطعی فیشینگ نیست.", "This tool does not open or download the URL and is not a definitive phishing detector."),
+                color = TextTertiary,
+                fontSize = 9.sp
+            )
+        }
+    }
+}
+
+@Composable
 private fun SecurityToolsScreen(
     fa: Boolean,
     result: ScanResult?,
@@ -1735,6 +1890,8 @@ private fun SecurityToolsScreen(
             Text(tr(fa, "جعبه‌ابزار امنیتی", "Security toolkit"), color = TextPrimary, fontSize = 25.sp, fontWeight = FontWeight.Bold)
             Text(tr(fa, "وضعیت هر قابلیت به‌صورت شفاف مشخص شده است.", "Every module is labelled by its actual implementation status."), color = TextSecondary, fontSize = 12.sp)
         }
+
+        UrlRiskCheckCard(fa = fa)
 
         ToolModuleCard(
             icon = "lock",
@@ -1755,9 +1912,9 @@ private fun SecurityToolsScreen(
         ToolModuleCard(
             icon = "link",
             title = tr(fa, "محافظ فیشینگ و لینک", "Phishing & link shield"),
-            description = tr(fa, "بررسی URL انتخاب‌شده توسط کاربر؛ پایگاه اعتبار و تحلیل دامنه هنوز متصل نشده است.", "User-submitted URL checks; reputation and domain analysis are not connected yet."),
-            status = tr(fa, "برنامه‌ریزی‌شده", "PLANNED"),
-            tint = TextTertiary,
+            description = tr(fa, "تحلیل ساختاری آفلاین URL و استعلام اختیاری اعتبار دامنه از API ابری؛ نتیجه ناموجود به‌عنوان نامشخص نمایش داده می‌شود.", "Offline URL structure analysis with optional cloud domain reputation; missing records remain unknown."),
+            status = tr(fa, "تحلیل محلی فعال", "LOCAL CHECKS"),
+            tint = BrandTeal,
             onClick = { onFeature("phishing") }
         )
         ToolModuleCard(
@@ -2451,7 +2608,7 @@ private fun featureTitle(fa: Boolean, feature: String): String = when (feature) 
 private fun featureDescription(fa: Boolean, feature: String): String = when (feature) {
     "quarantine" -> tr(fa, "با درخواست کاربر یک نسخه AES-GCM رمزنگاری‌شده در فضای خصوصی ذخیره و هش آن بررسی می‌شود. فایل اصلی حذف نمی‌شود. مدیریت، بازیابی و حذف امن نسخه‌های قرنطینه در مرحله بعد تکمیل می‌شود.", "At the user's request, an AES-GCM encrypted copy is stored in private app storage and its hash is verified. The original is not removed. Quarantine listing, restore and secure deletion are planned next.")
     "vulnerability" -> tr(fa, "این ماژول هنوز نتیجه آسیب‌پذیری واقعی تولید نمی‌کند. مرحله بعدی شامل شناسایی SDKها و کتابخانه‌ها و تطبیق آن‌ها با منابع CVE معتبر است.", "This module does not yet produce vulnerability findings. Next steps include SDK and library inventory mapped to trusted CVE sources.")
-    "phishing" -> tr(fa, "بررسی URL با فهرست اعتبار و تحلیل دامنه هنوز متصل نشده است. هیچ لینک یا پیامی در پس‌زمینه خوانده نمی‌شود.", "URL reputation and domain analysis are not connected yet. No links or messages are read in the background.")
+    "phishing" -> tr(fa, "تحلیل ساختاری URL روی دستگاه انجام می‌شود. استعلام اعتبار ابری فقط با ارسال دستی نشانی از سوی کاربر انجام می‌شود؛ نبود رکورد به معنی پاک بودن نیست.", "URL structure is checked on-device. Cloud reputation is queried only after a user submits the address; a missing record does not mean safe.")
     "network" -> tr(fa, "محافظ شبکه هنوز فعال نیست. پیاده‌سازی آن به طراحی شفاف DNS/VPN محلی و بررسی سیاست‌های Android و Google Play نیاز دارد.", "Network protection is not active. Implementation requires transparent local DNS/VPN design and Android/Google Play policy review.")
     "brain" -> tr(fa, "فعلاً گزارش بر اساس قواعد محدود و شواهد قابل مشاهده ساخته می‌شود. امتیازدهی چندموتوره و تحلیل AI هنوز به موتور اسکن وصل نشده است.", "Reports currently use limited, visible rules and evidence. Multi-engine scoring and AI reasoning are not yet connected to the scanner.")
     "selfdefense" -> tr(fa, "برنامه از تنظیمات پایه مانند غیرفعال‌بودن cleartext و backup استفاده می‌کند. پایش یکپارچگی زمان اجرا و دفاع در برابر دست‌کاری هنوز نیازمند توسعه و آزمون است.", "The app uses baseline controls such as disabled cleartext traffic and backup. Runtime integrity and anti-tamper monitoring still require implementation and testing.")
