@@ -4,6 +4,7 @@ import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.Locale
 
 data class CloudUrlCheckResult(
     val level: String,
@@ -136,6 +137,9 @@ object CloudThreatApi {
             val status = connection.responseCode
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
             val body = stream?.let(::readBounded).orEmpty()
+            if (status == 503) {
+                throw IllegalStateException("Cloud reputation database is currently unavailable.")
+            }
             if (status !in 200..299) {
                 throw IllegalStateException("Cloud hash reputation returned HTTP $status.")
             }
@@ -161,7 +165,7 @@ object CloudThreatApi {
     }
 
     internal fun validateSha256(value: String): String {
-        val normalized = value.trim().lowercase()
+        val normalized = value.trim().lowercase(Locale.ROOT)
         require(normalized.matches(Regex("[0-9a-f]{64}"))) { "A valid SHA-256 digest is required." }
         return normalized
     }
