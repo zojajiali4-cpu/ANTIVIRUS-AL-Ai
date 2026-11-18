@@ -149,6 +149,10 @@ fun AntivirusApp() {
     var feedMessage by remember { mutableStateOf<String?>(null) }
     var cloudChecking by remember { mutableStateOf(false) }
     var cloudMessage by remember { mutableStateOf<String?>(null) }
+    var showHashLookupConsent by remember { mutableStateOf(false) }
+    var hashLookupBusy by remember { mutableStateOf(false) }
+    var hashLookupResult by remember { mutableStateOf<CloudHashReputationResult?>(null) }
+    var hashLookupMessage by remember { mutableStateOf<String?>(null) }
     val fa = language == "fa"
     val checkCloudApi: () -> Unit = {
         if (!cloudChecking) {
@@ -160,6 +164,38 @@ fun AntivirusApp() {
                     tr(fa, "اتصال ابری برقرار نشد: ${error.message ?: "خطای شبکه"}", "Cloud API unavailable: ${error.message ?: "network error"}")
                 } finally {
                     cloudChecking = false
+                }
+            }
+        }
+    }
+
+    val confirmHashLookup: () -> Unit = {
+        showHashLookupConsent = false
+        val selectedHash = scanResult?.sha256
+        if (selectedHash.isNullOrBlank()) {
+            hashLookupMessage = tr(fa, "هش فایل در دسترس نیست؛ استعلام انجام نشد.", "The file hash is unavailable; no lookup was sent.")
+        } else if (!hashLookupBusy) {
+            hashLookupBusy = true
+            hashLookupMessage = null
+            hashLookupResult = null
+            scope.launch {
+                try {
+                    val result = withContext(Dispatchers.IO) {
+                        CloudThreatApi.checkSha256(selectedHash)
+                    }
+                    if (scanResult?.sha256 == selectedHash) {
+                        hashLookupResult = result
+                    }
+                } catch (error: Exception) {
+                    if (scanResult?.sha256 == selectedHash) {
+                        hashLookupMessage = tr(
+                            fa,
+                            "استعلام آنلاین انجام نشد: ${error.message ?: "خطای شبکه"}",
+                            "Online reputation lookup failed: ${error.message ?: "network error"}"
+                        )
+                    }
+                } finally {
+                    hashLookupBusy = false
                 }
             }
         }
@@ -209,6 +245,9 @@ fun AntivirusApp() {
             }
             scanning = true
             scanResult = null
+            hashLookupResult = null
+            hashLookupMessage = null
+            showHashLookupConsent = false
             errorMessage = null
             notice = null
             activeTab = MainTab.SCAN.key
@@ -244,6 +283,9 @@ fun AntivirusApp() {
             }
             scanning = true
             scanResult = null
+            hashLookupResult = null
+            hashLookupMessage = null
+            showHashLookupConsent = false
             folderReport = null
             errorMessage = null
             notice = null
@@ -364,6 +406,10 @@ fun AntivirusApp() {
                                 errorMessage = errorMessage,
                                 notice = notice,
                                 quarantining = quarantining,
+                                hashLookupBusy = hashLookupBusy,
+                                hashLookupResult = hashLookupResult,
+                                hashLookupMessage = hashLookupMessage,
+                                onHashLookupRequested = { if (!hashLookupBusy) showHashLookupConsent = true },
                                 onFileScan = launchFileScan,
                                 onApkScan = launchApkScan,
                                 onFolderScan = launchFolderScan,
@@ -396,6 +442,9 @@ fun AntivirusApp() {
                                 },
                                 onClearReport = {
                                     scanResult = null
+                                    hashLookupResult = null
+                                    hashLookupMessage = null
+                                    showHashLookupConsent = false
                                     errorMessage = null
                                     notice = null
                                 }
@@ -487,6 +536,38 @@ fun AntivirusApp() {
                     onClick = { featureInfo = null },
                     colors = ButtonDefaults.buttonColors(containerColor = BrandTeal)
                 ) { Text(tr(fa, "بستن", "Close"), color = AppBackground) }
+            }
+        )
+    }
+
+    if (showHashLookupConsent) {
+        AlertDialog(
+            onDismissRequest = { showHashLookupConsent = false },
+            containerColor = SurfaceRaised,
+            title = { Text(tr(fa, "استعلام آنلاین هش فایل", "Online file-hash lookup"), color = TextPrimary) },
+            text = {
+                Text(
+                    tr(
+                        fa,
+                        "با تأیید تو، فقط اثرانگشت SHA-256 همین فایل به سرویس اعتبارسنجی ابری ارسال می‌شود. محتوای فایل، نام و مسیر آن ارسال نمی‌شوند. فراداده معمول درخواست شبکه مانند IP ممکن است برای محدودسازی سوءاستفاده پردازش شود. این استعلام اختیاری است؛ تطبیق می‌تواند یک نشانه اعتبار باشد، اما نبود تطبیق هرگز به معنی سالم بودن فایل نیست.",
+                        "With your approval, only this file's SHA-256 fingerprint is sent to the cloud reputation service. File contents, name and path are not sent. Ordinary request metadata such as the IP address may be processed for abuse prevention. This lookup is optional; a match is a reputation signal, while no match never proves that the file is safe."
+                    ),
+                    color = TextSecondary
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = confirmHashLookup,
+                    enabled = !hashLookupBusy,
+                    colors = ButtonDefaults.buttonColors(containerColor = BrandTeal)
+                ) {
+                    Text(tr(fa, "ارسال فقط هش", "Send hash only"), color = AppBackground)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showHashLookupConsent = false }) {
+                    Text(tr(fa, "انصراف", "Cancel"))
+                }
             }
         )
     }
@@ -1466,6 +1547,10 @@ private fun ScanCenterScreen(
     errorMessage: String?,
     notice: String?,
     quarantining: Boolean,
+    hashLookupBusy: Boolean,
+    hashLookupResult: CloudHashReputationResult?,
+    hashLookupMessage: String?,
+    onHashLookupRequested: () -> Unit,
     onFileScan: () -> Unit,
     onApkScan: () -> Unit,
     onFolderScan: () -> Unit,
@@ -1577,6 +1662,10 @@ private fun ScanCenterScreen(
                 result = it,
                 fa = fa,
                 quarantining = quarantining,
+                hashLookupBusy = hashLookupBusy,
+                hashLookupResult = hashLookupResult,
+                hashLookupMessage = hashLookupMessage,
+                onHashLookupRequested = onHashLookupRequested,
                 onQuarantine = onQuarantine,
                 onClear = onClearReport
             )
@@ -1728,6 +1817,10 @@ private fun ScanResultCard(
     result: ScanResult,
     fa: Boolean,
     quarantining: Boolean,
+    hashLookupBusy: Boolean,
+    hashLookupResult: CloudHashReputationResult?,
+    hashLookupMessage: String?,
+    onHashLookupRequested: () -> Unit,
     onQuarantine: () -> Unit,
     onClear: () -> Unit
 ) {
@@ -1771,6 +1864,73 @@ private fun ScanResultCard(
             }
 
             DetailPanel(title = "SHA-256", value = result.sha256)
+
+            OutlinedButton(
+                onClick = onHashLookupRequested,
+                enabled = !hashLookupBusy,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    if (hashLookupBusy) tr(fa, "در حال استعلام…", "Checking online…")
+                    else tr(fa, "استعلام اختیاری اعتبار هش", "Optional online hash reputation")
+                )
+            }
+            Text(
+                tr(
+                    fa,
+                    "فقط پس از تأیید جداگانه تو، SHA-256 ارسال می‌شود؛ فایل آپلود نمی‌شود.",
+                    "Only the SHA-256 digest is sent after separate confirmation; the file is not uploaded."
+                ),
+                color = TextTertiary,
+                fontSize = 10.sp,
+                lineHeight = 15.sp
+            )
+            hashLookupMessage?.let {
+                InfoBanner(
+                    title = tr(fa, "استعلام اعتبار", "Reputation lookup"),
+                    body = it,
+                    warning = true
+                )
+            }
+            hashLookupResult?.let { reputation ->
+                val tint = when (reputation.classification) {
+                    "MALWARE" -> ColorDanger
+                    "PUA", "SUSPICIOUS" -> ColorWarning
+                    else -> BrandBlue
+                }
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = SurfaceRaised),
+                    shape = RoundedCornerShape(15.dp)
+                ) {
+                    Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                        Text(tr(fa, "نتیجه اعتبارسنجی ابری", "Cloud reputation result"), color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text(
+                            when {
+                                reputation.found && reputation.classification == "MALWARE" -> tr(fa, "تطبیق با نشانگر بدافزار", "Matched known malware indicator")
+                                reputation.found && reputation.classification == "PUA" -> tr(fa, "تطبیق با برنامه بالقوه ناخواسته", "Matched potentially unwanted software")
+                                reputation.found && reputation.classification == "SUSPICIOUS" -> tr(fa, "تطبیق با نشانگر مشکوک", "Matched suspicious indicator")
+                                else -> tr(fa, "رکورد معتبری برای این هش پیدا نشد", "No reputation record was found for this hash")
+                            },
+                            color = tint,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
+                        )
+                        reputation.familyId?.let { DetailLine(tr(fa, "خانواده", "Family"), it) }
+                        reputation.source?.let { DetailLine(tr(fa, "منبع", "Source"), it) }
+                        Text(
+                            tr(
+                                fa,
+                                "این پاسخ مستقل از نتیجه اسکن محلی است. نبود رکورد، پوشش کامل پایگاه را ثابت نمی‌کند و فایل را سالم اعلام نمی‌کند.",
+                                "This result is separate from the local scan verdict. An absent record does not prove database coverage or certify the file as safe."
+                            ),
+                            color = TextSecondary,
+                            fontSize = 10.sp,
+                            lineHeight = 15.sp
+                        )
+                    }
+                }
+            }
+
             result.apkMetadata?.let { apk ->
                 Card(colors = CardDefaults.cardColors(containerColor = SurfaceRaised), shape = RoundedCornerShape(15.dp)) {
                     Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
