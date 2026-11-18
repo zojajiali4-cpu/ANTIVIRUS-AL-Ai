@@ -2,14 +2,14 @@ const H = { "content-type": "application/json; charset=utf-8", "cache-control": 
 const HASH = /^[a-f0-9]{64}$/;
 const out = (v,s=200) => new Response(JSON.stringify(v),{status:s,headers:H});
 function inspectUrl(value) {
- if(typeof value!=="string"||!value.length||value.length>2048||/[\\s\\x00-\\x1f\\x7f]/.test(value)) return {level:"INVALID",signals:["INVALID_INPUT"]};
+ if(typeof value!=="string"||!value.length||value.length>2048||/[\s\x00-\x1f\x7f]/.test(value)) return {level:"INVALID",signals:["INVALID_INPUT"]};
  let u; try { u=new URL(value); } catch { return {level:"INVALID",signals:["MALFORMED_URL"]}; }
  if(!["http:","https:"].includes(u.protocol)) return {level:"INVALID",signals:["UNSUPPORTED_SCHEME"]};
- const host=u.hostname.toLowerCase().replace(/\\.$/,""), sig=[];
+ const host=u.hostname.toLowerCase().replace(/\.$/,""), sig=[];
  if(u.username||u.password) sig.push("EMBEDDED_CREDENTIALS");
  if(host.split(".").some(x=>x.startsWith("xn--"))) sig.push("PUNYCODE_HOST");
- if(host.includes(":")||/^\\d{1,3}(?:\\.\\d{1,3}){3}$/.test(host)) sig.push("IP_LITERAL_HOST");
- if((host.match(/\\./g)||[]).length>=4) sig.push("MANY_SUBDOMAINS");
+ if(host.includes(":")||/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) sig.push("IP_LITERAL_HOST");
+ if((host.match(/\./g)||[]).length>=4) sig.push("MANY_SUBDOMAINS");
  if(u.protocol==="http:") sig.push("UNENCRYPTED_HTTP");
  if(u.port&&!["80","443"].includes(u.port)) sig.push("UNUSUAL_PORT");
  if(["bit.ly","tinyurl.com","t.co","goo.gl","ow.ly","is.gd","buff.ly","cutt.ly"].includes(host)) sig.push("URL_SHORTENER");
@@ -21,7 +21,7 @@ function inspectUrl(value) {
 async function limited(req,env){
  if(!env.DB)return true;
  const ip=req.headers.get("CF-Connecting-IP")||"unknown";
- const b=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(ip+(env.RATE_SALT||"alai-v1")));
+ const b=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(ip+(env.RATE_SALT||env.ADMIN_API_KEY||"")));
  const key=[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,"0")).join(""), bucket=Math.floor(Date.now()/60000);
  await env.DB.prepare("INSERT INTO api_rate_limits(ip_hash,bucket,hits) VALUES(?,?,1) ON CONFLICT(ip_hash,bucket) DO UPDATE SET hits=hits+1").bind(key,bucket).run();
  const row=await env.DB.prepare("SELECT hits FROM api_rate_limits WHERE ip_hash=? AND bucket=?").bind(key,bucket).first();
@@ -31,7 +31,7 @@ async function limited(req,env){
 async function body(req,max=65536){const n=Number(req.headers.get("content-length")||0);if(n>max)throw Error("BODY_TOO_LARGE");const t=await req.text();if(t.length>max)throw Error("BODY_TOO_LARGE");return JSON.parse(t);}
 export default { async fetch(req,env){
  const u=new URL(req.url), p=u.pathname;
- if(req.method==="OPTIONS")return new Response(null,{status:204,headers:{...H,"access-control-allow-origin":"*","access-control-allow-methods":"GET,POST,OPTIONS","access-control-allow-headers":"content-type,authorization"}});
+ if(req.method==="OPTIONS"){const origin=req.headers.get("Origin")||"";const allowed=(env.CORS_ALLOWED_ORIGINS||"").split(",").map(x=>x.trim()).filter(Boolean);const headers={...H,"access-control-allow-methods":"GET,POST,OPTIONS","access-control-allow-headers":"content-type,authorization","vary":"Origin"};if(origin&&allowed.includes(origin))headers["access-control-allow-origin"]=origin;return new Response(null,{status:204,headers});}
  if(p==="/v1/health"&&req.method==="GET")return out({ok:true,service:"ANTIVIRUS AL AI API",version:"1.0.0",database:!!env.DB});
  if(!p.startsWith("/v1/"))return out({error:"NOT_FOUND"},404);
  if(!await limited(req,env))return out({error:"RATE_LIMITED",retryAfterSeconds:60},429);
