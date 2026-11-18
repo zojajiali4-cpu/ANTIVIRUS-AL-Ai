@@ -331,7 +331,7 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
     val storageSettingsLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) {
-        if (DeviceScanEngine.hasBroadStorageAccess()) {
+        if (DeviceScanEngine.hasBroadStorageAccess(context)) {
             executeDeviceScan(pendingDeepScan)
         } else {
             // The user declined broad shared-storage access. Still scan readable
@@ -360,7 +360,7 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
         if (!scanning) {
             pendingDeepScan = deep
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                if (DeviceScanEngine.hasBroadStorageAccess()) {
+                if (DeviceScanEngine.hasBroadStorageAccess(context)) {
                     executeDeviceScan(deep)
                 } else {
                     showStoragePermissionRationale = true
@@ -807,7 +807,7 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
                             pendingInventoryConsentAction = null
                             when (action) {
                                 AppInventoryConsentAction.DEVICE_SCAN -> {
-                                    if (DeviceScanEngine.hasBroadStorageAccess()) {
+                                    if (DeviceScanEngine.hasBroadStorageAccess(context)) {
                                         requestDeviceScan(pendingDeepScan)
                                     } else {
                                         notice = tr(
@@ -818,7 +818,7 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
                                     }
                                 }
                                 AppInventoryConsentAction.PROTECTION -> {
-                                    if (DeviceScanEngine.hasBroadStorageAccess()) {
+                                    if (DeviceScanEngine.hasBroadStorageAccess(context)) {
                                         performProtectionToggle(true)
                                     } else {
                                         notice = tr(
@@ -2772,8 +2772,17 @@ private fun SecurityToolsScreen(
     var refreshingFeed by remember { mutableStateOf(false) }
     var feedMessage by remember { mutableStateOf<String?>(null) }
     var feedMessageSuccess by remember { mutableStateOf(false) }
-    val fileMonitoringAvailable = Build.VERSION.SDK_INT < Build.VERSION_CODES.R ||
-        Environment.isExternalStorageManager()
+    val fileMonitoringAvailable = DeviceScanEngine.hasBroadStorageAccess(context)
+    val legacyStoragePermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        feedMessage = if (granted) {
+            tr(fa, "دسترسی خواندن حافظه فعال شد؛ اکنون می‌توانی محافظت فایل‌ها را روشن کنی.", "Shared-storage read access is now granted; you can enable file protection.")
+        } else {
+            tr(fa, "مجوز خواندن حافظه داده نشد؛ پایش فایل‌ها در دسترس نیست.", "Storage read permission was denied; file monitoring is unavailable.")
+        }
+        feedMessageSuccess = granted
+    }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -2844,7 +2853,12 @@ private fun SecurityToolsScreen(
                                     Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
                                     Uri.parse("package:${context.packageName}")
                                 )
-                                runCatching { context.startActivity(settingsIntent) }
+                                runCatching { context.startActivity(settingsIntent) }.onFailure {
+                                    feedMessage = tr(fa, "تنظیمات دسترسی فایل باز نشد؛ از تنظیمات برنامه در Android وارد بخش دسترسی ویژه شو.", "Could not open all-files settings; open the app's Special app access page in Android settings.")
+                                    feedMessageSuccess = false
+                                }
+                            } else {
+                                legacyStoragePermissionLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
                             }
                         },
                         modifier = Modifier.fillMaxWidth()
