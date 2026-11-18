@@ -115,7 +115,15 @@ async function getPlan(env, code) {
   return { ...row, prices: map[code] };
 }
 async function createOrder(request, env) {
-  const body = await readJson(request);
+  let body;
+  try {
+    body = await readJson(request);
+  } catch (error) {
+    return json({ error: error.message === "Request too large" ? "Request too large." : "Invalid request body." }, 400);
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ error: "A JSON object is required." }, 400);
+  }
   const email = String(body.email || "").trim().toLowerCase();
   const locale = body.locale === "en" ? "en" : "fa";
   const plan = await getPlan(env, body.plan);
@@ -273,6 +281,9 @@ async function orderStatus(request, env) {
     body = await readJson(request);
   } catch (error) {
     return json({ error: error.message === "Request too large" ? "Request too large." : "Invalid request body." }, 400);
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ error: "A JSON object is required." }, 400);
   }
   const orderId = String(body.order || "").trim();
   const email = String(body.email || "").trim().toLowerCase();
