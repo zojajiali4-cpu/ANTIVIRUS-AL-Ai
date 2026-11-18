@@ -340,6 +340,10 @@ fun AntivirusApp() {
                                 scanning = scanning,
                                 result = scanResult,
                                 batchReport = folderReport,
+                                folderProgress = folderProgress,
+                                folderCurrent = folderCurrent,
+                                folderTotal = folderTotal,
+                                folderCurrentName = folderCurrentName,
                                 onOpenScan = { activeTab = MainTab.SCAN.key },
                                 onFileScan = launchFileScan,
                                 onApkScan = launchApkScan,
@@ -651,11 +655,128 @@ private fun MainNavigationBar(
 private data class NavItem(val tab: MainTab, val icon: String, val label: String)
 
 @Composable
+private fun HomeSafetyStatusCard(
+    fa: Boolean,
+    scanning: Boolean,
+    result: ScanResult?,
+    batchReport: FolderScanReport?,
+    folderProgress: Float,
+    folderCurrent: Int,
+    folderTotal: Int,
+    folderCurrentName: String?,
+    onOpenScan: () -> Unit
+) {
+    val verdict = result?.verdict
+    val status = when {
+        scanning -> tr(fa, "در حال بررسی", "Scanning")
+        verdict == ScanVerdict.KNOWN_MALWARE ||
+            verdict == ScanVerdict.KNOWN_PUA ||
+            verdict == ScanVerdict.KNOWN_SUSPICIOUS -> tr(fa, "تهدید شناخته‌شده", "Known threat")
+        verdict == ScanVerdict.SUSPICIOUS -> tr(fa, "نیازمند بررسی", "Review required")
+        verdict == ScanVerdict.NO_KNOWN_INDICATOR -> tr(fa, "بدون تطبیق شناخته‌شده", "No known match")
+        verdict == ScanVerdict.TEST_MARKER_MATCH -> tr(fa, "نشانگر آزمایشی", "Test marker")
+        verdict == ScanVerdict.UNKNOWN_APK ||
+            verdict == ScanVerdict.UNSUPPORTED_FILE -> tr(fa, "نامشخص", "Unknown")
+        batchReport != null -> tr(fa, "گزارش گروهی آماده", "Batch report ready")
+        else -> tr(fa, "هنوز اسکن نشده", "Not scanned yet")
+    }
+    val tint = when {
+        verdict == ScanVerdict.KNOWN_MALWARE ||
+            verdict == ScanVerdict.KNOWN_PUA ||
+            verdict == ScanVerdict.KNOWN_SUSPICIOUS -> ColorDanger
+        verdict == ScanVerdict.SUSPICIOUS ||
+            verdict == ScanVerdict.UNKNOWN_APK ||
+            verdict == ScanVerdict.UNSUPPORTED_FILE -> ColorWarning
+        verdict == ScanVerdict.TEST_MARKER_MATCH -> BrandBlue
+        else -> BrandTeal
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenScan),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = SurfaceBase)
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(tr(fa, "وضعیت امنیت", "SECURITY STATUS"), color = BrandTeal, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Text(status, color = TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                }
+                StatusBadge(
+                    text = if (scanning) tr(fa, "فعال", "ACTIVE") else tr(fa, "آخرین گزارش", "LATEST"),
+                    tint = tint
+                )
+            }
+            if (scanning) {
+                if (folderTotal > 0) {
+                    LinearProgressIndicator(
+                        progress = { folderProgress.coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = BrandTeal,
+                        trackColor = BrandTeal.copy(alpha = 0.13f)
+                    )
+                    Text(
+                        folderCurrent.toString() + " / " + folderTotal.toString() + " · " +
+                            (folderCurrentName ?: tr(fa, "در حال آماده‌سازی", "Preparing")),
+                        color = TextSecondary,
+                        fontSize = 10.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                } else {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = BrandTeal,
+                        trackColor = BrandTeal.copy(alpha = 0.13f)
+                    )
+                }
+            }
+            batchReport?.let { report ->
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ReportMetric(Modifier.weight(1f), tr(fa, "تهدید", "Threats"), report.summary.threats.toString(), ColorDanger)
+                    ReportMetric(Modifier.weight(1f), tr(fa, "نامشخص", "Unknown"), report.summary.unknown.toString(), ColorWarning)
+                    ReportMetric(Modifier.weight(1f), tr(fa, "بررسی‌شده", "Scanned"), report.summary.scanned.toString(), BrandTeal)
+                }
+            } ?: result?.let { scan ->
+                Text(
+                    scan.displayName + " · " + formatBytes(scan.sizeBytes),
+                    color = TextSecondary,
+                    fontSize = 11.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            } ?: Text(
+                tr(fa, "هنوز فایل یا پوشه‌ای برای بررسی انتخاب نشده است.", "No file or folder has been selected for inspection yet."),
+                color = TextSecondary,
+                fontSize = 11.sp
+            )
+            Text(
+                tr(
+                    fa,
+                    "این وضعیت فقط فایل‌ها و پوشه‌های انتخاب‌شده را پوشش می‌دهد؛ اسکن سراسری گوشی یا محافظت بلادرنگ فعال نیست.",
+                    "This status covers only selected files and folders. System-wide scanning and real-time protection are not active."
+                ),
+                color = TextTertiary,
+                fontSize = 9.sp,
+                lineHeight = 14.sp
+            )
+        }
+    }
+}
+
+@Composable
 private fun DashboardScreen(
     fa: Boolean,
     scanning: Boolean,
     result: ScanResult?,
     batchReport: FolderScanReport?,
+    folderProgress: Float,
+    folderCurrent: Int,
+    folderTotal: Int,
+    folderCurrentName: String?,
     onOpenScan: () -> Unit,
     onFileScan: () -> Unit,
     onApkScan: () -> Unit,
@@ -696,6 +817,18 @@ private fun DashboardScreen(
             onApk = onApkScan
         )
 
+        HomeSafetyStatusCard(
+            fa = fa,
+            scanning = scanning,
+            result = result,
+            batchReport = batchReport,
+            folderProgress = folderProgress,
+            folderCurrent = folderCurrent,
+            folderTotal = folderTotal,
+            folderCurrentName = folderCurrentName,
+            onOpenScan = onOpenScan
+        )
+
         Column(verticalArrangement = Arrangement.spacedBy(11.dp)) {
             SectionTitle(
                 title = tr(fa, "وضعیت محافظت", "Protection status"),
@@ -714,8 +847,8 @@ private fun DashboardScreen(
                     modifier = Modifier.weight(1f),
                     icon = "database",
                     title = tr(fa, "بانک تهدید", "Threat feed"),
-                    value = tr(fa, "متصل نیست", "Not connected"),
-                    detail = tr(fa, "کلید انتشار تنظیم نشده", "Publisher key not set"),
+                    value = tr(fa, "منتظر فید", "Awaiting feed"),
+                    detail = tr(fa, "کلید عمومی پین شده؛ انتشار لازم است", "Public key pinned; feed publication pending"),
                     tint = ColorWarning
                 )
             }
@@ -792,8 +925,8 @@ private fun DashboardScreen(
                     modifier = Modifier.weight(1f),
                     icon = "lock",
                     title = tr(fa, "قرنطینه", "Quarantine"),
-                    subtitle = tr(fa, "نسخه رمزنگاری‌شده", "Encrypted copy"),
-                    status = tr(fa, "پایه‌ای", "Basic"),
+                    subtitle = tr(fa, "AES-GCM و بازیابی", "AES-GCM + restore"),
+                    status = tr(fa, "مدیریت", "Managed"),
                     tint = BrandTeal
                 )
                 MiniFeatureCard(
