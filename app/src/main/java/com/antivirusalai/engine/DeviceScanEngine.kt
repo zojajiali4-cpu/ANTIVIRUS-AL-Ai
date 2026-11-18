@@ -32,8 +32,13 @@ object DeviceScanEngine {
         "Ringtones", "Recordings", "Android/media"
     )
 
-    fun hasBroadStorageAccess(): Boolean =
-        Build.VERSION.SDK_INT < Build.VERSION_CODES.R || Environment.isExternalStorageManager()
+    fun hasBroadStorageAccess(context: Context): Boolean =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else {
+            context.checkSelfPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE) ==
+                PackageManager.PERMISSION_GRANTED
+        }
 
     suspend fun scanDevice(
         context: Context,
@@ -42,7 +47,7 @@ object DeviceScanEngine {
     ): FolderScanReport = withContext(Dispatchers.IO) {
         // Never bypass Android's special-access gate. If the user declines it,
         // continue with the readable installed APK components instead of aborting.
-        val hasStorageAccess = hasBroadStorageAccess()
+        val hasStorageAccess = hasBroadStorageAccess(context)
         val roots = if (hasStorageAccess) findStorageRoots(context) else emptyList()
         val failures = mutableListOf<FolderScanFailure>()
         if (!hasStorageAccess) {
