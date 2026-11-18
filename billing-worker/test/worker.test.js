@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { webcrypto } from "node:crypto";
 
 if (!globalThis.crypto) {
@@ -357,4 +358,13 @@ test("expired orders and missing provider references cannot activate", async () 
   assert.equal(await activateOrder({ DB: emptyReferenceDB }, ORDER_ID, ""), false);
   assert.equal(expiredDB.subscriptions.length, 0);
   assert.equal(emptyReferenceDB.subscriptions.length, 0);
+});
+
+
+test("billing portal sends order email only in a POST body", async () => {
+  const portal = await readFile(new URL("../../billing-portal/index.html", import.meta.url), "utf8");
+  assert.match(portal, /\/api\/order-status[\s\S]{0,180}\{method:"POST"/);
+  assert.match(portal, /JSON\.stringify\(\{order:orderId,email\}\)/);
+  assert.doesNotMatch(portal, /\/api\/order-status\?[^"']*email=/);
+  assert.match(portal, /id="status-lookup"/);
 });
