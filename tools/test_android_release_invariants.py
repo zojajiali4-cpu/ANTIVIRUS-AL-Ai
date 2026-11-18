@@ -1,3 +1,4 @@
+import subprocess
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -54,6 +55,23 @@ class AndroidReleaseInvariantTests(unittest.TestCase):
         legacy_refs = {node.get(ANDROID_NS + "drawable") for node in legacy.findall("item")}
         self.assertIn("@drawable/launcher_icon_foreground", legacy_refs)
         self.assertIn("@color/launcher_icon_background", legacy_refs)
+
+
+    def test_guardian_launcher_artwork_matches_reviewed_asset(self):
+        relative = "app/src/main/res/drawable/guardian_robot.webp"
+        expected_git_blob = "ee4b5c05bbdb3bc8d7fa245c21398556d943ff6c"
+        result = subprocess.run(
+            ["git", "rev-parse", f"HEAD:{relative}"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(
+            expected_git_blob,
+            result.stdout.strip(),
+            "Guardian launcher artwork changed. Only update this pin with an explicitly reviewed icon replacement.",
+        )
 
     def test_core_scanner_and_protection_components_are_present(self):
         required = (
