@@ -16,6 +16,7 @@ import android.os.Environment
 import android.os.FileObserver
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import com.antivirusalai.engine.DeviceScanEngine
 import com.antivirusalai.engine.ScanEngine
 import com.antivirusalai.engine.ScanVerdict
 import kotlinx.coroutines.CancellationException
@@ -68,6 +69,9 @@ class ProtectionService : Service() {
 
     private val packageReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
+            // Re-check consent before even reading the package identifier from
+            // a system install event; consent may have been revoked while active.
+            if (!InstalledAppInventoryConsent.isGranted(this@ProtectionService)) return
             val packageName = intent?.data?.schemeSpecificPart ?: return
             if (packageName == packageNameForSelf()) return
             serviceScope.launch {
@@ -96,8 +100,9 @@ class ProtectionService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        // Re-run setup when the activity asks the existing service to start again,
-        // e.g. after the user returns from Android's All files access settings.
+        // Re-evaluate revocable app-inventory consent and storage access whenever
+        // the activity asks the existing service to refresh its coverage.
+        registerPackageMonitor()
         startFileMonitoring()
         return START_STICKY
     }
@@ -118,16 +123,17 @@ class ProtectionService : Service() {
         super.onDestroy()
     }
 
-    private fun startAsForeground() {
+    private fun buildProtectionNotification(status: String): android.app.Notification {
         val stopIntent = Intent(this, ProtectionService::class.java).setAction(ACTION_STOP)
         val stopPendingIntent = PendingIntent.getService(
             this, 4109, stopIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+        return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_lock_lock)
-            .setContentTitle("ANTIVIRUS AL AI · محافظت فعال")
-            .setContentText("پایش فایل‌های قابل‌دسترسی و برنامه‌های تازه نصب‌شده")
+            .setContentTitle("ANTIVIRUS AL AI · وضعیت محافظت")
+            .setContentText(status)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(status))
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
@@ -135,7 +141,10 @@ class ProtectionService : Service() {
             .setSilent(true)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "توقف محافظت", stopPendingIntent)
             .build()
+    }
 
+    private fun startAsForeground() {
+        val notification = buildProtectionNotification("سرویس محافظت در حال بررسی دسترسی‌ها و محدوده پایش است.")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(
                 NOTIFICATION_ID,
@@ -144,6 +153,13 @@ class ProtectionService : Service() {
             )
         } else {
             startForeground(NOTIFICATION_ID, notification)
+        }
+    }
+
+    private fun updateProtectionNotification(status: String) {
+        runCatching {
+            getSystemService(NotificationManager::class.java)
+                .notify(NOTIFICATION_ID, buildProtectionNotification(status))
         }
     }
 
@@ -169,6 +185,17 @@ class ProtectionService : Service() {
     }
 
     private fun registerPackageMonitor() {
+        // Package inventory is a sensitive signal: registering package-change
+        // monitoring is gated by the same explicit, revocable in-app consent.
+        if (!InstalledAppInventoryConsent.isGranted(this)) {
+            if (packageReceiverRegistered) {
+                runCatching { unregisterReceiver(packageReceiver) }
+                packageReceiverRegistered = false
+            }
+            return
+        }
+        if (packageReceiverRegistered) return
+
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_PACKAGE_ADDED)
             addAction(Intent.ACTION_PACKAGE_REPLACED)
@@ -188,9 +215,21 @@ class ProtectionService : Service() {
     }
 
     private fun startFileMonitoring() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
+        if (!DeviceScanEngine.hasBroadStorageAccess(this)) {
+            val status = when {
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && packageReceiverRegistered ->
+                    "پایش فایل‌های حافظه مشترک فعال نیست؛ دسترسی «مدیریت همه فایل‌ها» داده نشده است. فقط رویداد نصب برنامه‌ها، با رضایت قبلی، پایش می‌شود."
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.R ->
+                    "پایش فایل‌ها فعال نیست؛ دسترسی «مدیریت همه فایل‌ها» و رضایت فهرست برنامه‌ها در دسترس نیست."
+                packageReceiverRegistered ->
+                    "پایش فایل‌های حافظه فعال نیست؛ مجوز خواندن حافظه داده نشده است. فقط رویداد نصب برنامه‌ها با رضایت قبلی پایش می‌شود."
+                else ->
+                    "پایش فایل‌ها و برنامه‌های تازه نصب‌شده فعال نیست؛ مجوز حافظه یا رضایت فهرست برنامه‌ها موجود نیست."
+            }
+            updateProtectionNotification(status)
             return
         }
+
         val storage = Environment.getExternalStorageDirectory()
         val targets = listOf(
             File(storage, "Download"),
@@ -206,6 +245,18 @@ class ProtectionService : Service() {
         targets.forEach { directory ->
             if (directory.isDirectory) watchTree(directory, depth = 0, visited = visited)
         }
+
+        val status = when {
+            observers.isNotEmpty() && packageReceiverRegistered ->
+                "پایش محدود فعال است: ${observers.size} ناظر پوشه و رویدادهای نصب برنامه‌ها. داده خصوصی برنامه‌ها و ترافیک شبکه پایش نمی‌شود."
+            observers.isNotEmpty() ->
+                "پایش محدود فعال است: ${observers.size} ناظر پوشه. فهرست برنامه‌های نصب‌شده تحت رضایت کاربر فعال نیست و ترافیک شبکه پایش نمی‌شود."
+            packageReceiverRegistered ->
+                "پایش فایل حافظه مشترک فعال نیست؛ فقط رویدادهای نصب یا به‌روزرسانی برنامه‌ها پایش می‌شوند."
+            else ->
+                "در این نشست هیچ پوشه فایل یا رویداد نصب برنامه‌ای تحت پایش نیست."
+        }
+        updateProtectionNotification(status)
     }
 
     private fun watchTree(directory: File, depth: Int, visited: MutableSet<String>) {
@@ -335,6 +386,7 @@ class ProtectionService : Service() {
     }
 
     private suspend fun scanInstalledPackage(packageName: String) {
+        if (!InstalledAppInventoryConsent.isGranted(this)) return
         try {
             val info = if (Build.VERSION.SDK_INT >= 33) {
                 packageManager.getApplicationInfo(

@@ -29,8 +29,8 @@ This document tracks release gates for ANTIVIRUS AL AI. A successful debug APK b
 The current manifest requests `MANAGE_EXTERNAL_STORAGE` and `QUERY_ALL_PACKAGES`. Both access sensitive user/device information and require a careful Play policy review.
 
 - [ ] Confirm that broad shared-storage access is essential to the app's core antivirus function and that Storage Access Framework / MediaStore alternatives are insufficient.
-- [ ] Submit the required All files access declaration and provide a clear in-app explanation before requesting the special access.
-- [ ] Submit the package-visibility declaration and explain why broad installed-app inventory is core to the antivirus feature.
+- [ ] The app now checks the required Android storage permission before shared-storage traversal and provides an in-app rationale. Still submit the required All files access declaration and obtain Play approval before release.
+- [ ] The app now requires separate, revocable in-app consent before reading installed-app inventory or monitoring new package events. Still submit the package-visibility declaration and explain why broad installed-app inventory is core to the antivirus feature; verify the disclosure and revocation flow on the exact release build.
 - [ ] Keep installed-app inventory local and never use it for advertising or analytics monetization.
 - [ ] Review foreground-service special-use declarations and ensure the service is user-initiated, transparent, stoppable, and accurately described.
 - [ ] Verify that denied permissions leave a useful limited mode and are never repeatedly or coercively requested.

@@ -2,13 +2,19 @@
 
 ## Requested capabilities and user consent
 
-The manifest requests `MANAGE_EXTERNAL_STORAGE` for broad shared-storage scanning and `QUERY_ALL_PACKAGES` for installed-app APK inventory. These permissions are sensitive. The app must clearly disclose their purpose, request user authorization through Android, and pass Google Play declaration/review where applicable. A permission being technically requestable does not mean Play has approved its use.
+The manifest requests `MANAGE_EXTERNAL_STORAGE` for broad shared-storage scanning and `QUERY_ALL_PACKAGES` for installed-app APK inventory. These are separate capabilities with separate user-facing gates:
+
+- Android 11+ shared-storage scanning checks `Environment.isExternalStorageManager()` before traversing storage. Earlier Android versions check the runtime `READ_EXTERNAL_STORAGE` permission.
+- Installed-app inventory is denied by default in the app. Before reading the broad package inventory or monitoring newly installed packages, ANTIVIRUS AL AI displays a separate in-app disclosure and requires affirmative consent. The setting can be revoked later; the scan engine and protection service re-check the saved consent before using package inventory.
+- Declining installed-app consent does not block a shared-storage scan when its separate storage access has been granted. If neither access path is approved, the app must not present an automatic device scan as meaningfully completed.
+
+Both permissions remain sensitive. Their availability in Android does not mean Google Play has approved their use. The developer must submit the relevant declarations, justify why the permissions are core to the antivirus purpose, and complete Play review.
 
 ## What the current app can inspect
 
 - Readable shared-storage files Android exposes after the user grants the relevant access, within explicit scan limits: quick scan 350 files/1 GiB; deep scan 10,000 files/5 GiB; 200 MiB per file.
 - APK archives that are readable from shared storage or exposed through package metadata.
-- Package metadata exposed by Android's PackageManager: declared permissions, components, target SDK, and signing-certificate information where available.
+- Package metadata exposed by Android's PackageManager only after separate, revocable in-app consent: declared permissions, components, target SDK, and signing-certificate information where available.
 - SHA-256 hashes calculated locally, then checked against the currently installed authenticated feed.
 - A harmless EICAR test string used only for scanner regression checks.
 
