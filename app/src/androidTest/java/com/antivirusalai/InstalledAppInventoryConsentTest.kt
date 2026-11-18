@@ -3,6 +3,8 @@ package com.antivirusalai
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.antivirusalai.engine.DeviceScanEngine
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -36,6 +38,13 @@ class InstalledAppInventoryConsentTest {
 
         InstalledAppInventoryConsent.setGranted(context, false)
         assertFalse(InstalledAppInventoryConsent.isGranted(context))
+    }
+
+    @Test
+    fun deviceScanReportsSkippedInventoryWhenConsentIsAbsent() = runBlocking {
+        InstalledAppInventoryConsent.setGranted(context, false)
+        val report = DeviceScanEngine.scanDevice(context, deep = false) { _, _, _ -> }
+        assertTrue(report.failures.any { it.name == "Installed app inventory" })
     }
 
     private fun clearStoredConsent() {
