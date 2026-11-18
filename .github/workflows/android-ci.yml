@@ -18,11 +18,9 @@ jobs:
     name: Build, unit tests, and lint
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Only public build configuration is available to ordinary validation steps.
+    # Release credentials are injected into the single protected signing step below.
     env:
-      ALAI_RELEASE_KEYSTORE_BASE64: ${{ secrets.ALAI_RELEASE_KEYSTORE_BASE64 }}
-      ALAI_RELEASE_STORE_PASSWORD: ${{ secrets.ALAI_RELEASE_STORE_PASSWORD }}
-      ALAI_RELEASE_KEY_ALIAS: ${{ secrets.ALAI_RELEASE_KEY_ALIAS }}
-      ALAI_RELEASE_KEY_PASSWORD: ${{ secrets.ALAI_RELEASE_KEY_PASSWORD }}
       ALAI_VERSION_CODE: ${{ github.run_number }}
       ALAI_THREAT_FEED_URL: ${{ secrets.ALAI_THREAT_FEED_URL }}
       ALAI_THREAT_FEED_PUBLIC_KEY_B64: ${{ secrets.ALAI_THREAT_FEED_PUBLIC_KEY_B64 }}
@@ -69,22 +67,40 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      # Signing is deliberately unavailable to push/PR validation and non-main dispatches.
       - name: Prepare protected release keystore
-        if: ${{ env.ALAI_RELEASE_KEYSTORE_BASE64 != '' && env.ALAI_RELEASE_STORE_PASSWORD != '' && env.ALAI_RELEASE_KEY_ALIAS != '' && env.ALAI_RELEASE_KEY_PASSWORD != '' }}
+        id: release-signing
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+        env:
+          ALAI_RELEASE_KEYSTORE_BASE64: ${{ secrets.ALAI_RELEASE_KEYSTORE_BASE64 }}
+          ALAI_RELEASE_STORE_PASSWORD: ${{ secrets.ALAI_RELEASE_STORE_PASSWORD }}
+          ALAI_RELEASE_KEY_ALIAS: ${{ secrets.ALAI_RELEASE_KEY_ALIAS }}
+          ALAI_RELEASE_KEY_PASSWORD: ${{ secrets.ALAI_RELEASE_KEY_PASSWORD }}
         shell: bash
         run: |
           set -euo pipefail
+          if [[ -z "${ALAI_RELEASE_KEYSTORE_BASE64}" || -z "${ALAI_RELEASE_STORE_PASSWORD}" || -z "${ALAI_RELEASE_KEY_ALIAS}" || -z "${ALAI_RELEASE_KEY_PASSWORD}" ]]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "Release signing is not configured; debug validation remains available."
+            exit 0
+          fi
           KEYSTORE_PATH="$RUNNER_TEMP/alai-release-upload.jks"
           printf '%s' "$ALAI_RELEASE_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          test -s "$KEYSTORE_PATH"
           chmod 600 "$KEYSTORE_PATH"
           echo "ALAI_RELEASE_STORE_FILE=$KEYSTORE_PATH" >> "$GITHUB_ENV"
+          echo "configured=true" >> "$GITHUB_OUTPUT"
 
       - name: Build signed release APK
-        if: ${{ env.ALAI_RELEASE_KEYSTORE_BASE64 != '' && env.ALAI_RELEASE_STORE_PASSWORD != '' && env.ALAI_RELEASE_KEY_ALIAS != '' && env.ALAI_RELEASE_KEY_PASSWORD != '' }}
+        if: steps.release-signing.outputs.configured == 'true'
+        env:
+          ALAI_RELEASE_STORE_PASSWORD: ${{ secrets.ALAI_RELEASE_STORE_PASSWORD }}
+          ALAI_RELEASE_KEY_ALIAS: ${{ secrets.ALAI_RELEASE_KEY_ALIAS }}
+          ALAI_RELEASE_KEY_PASSWORD: ${{ secrets.ALAI_RELEASE_KEY_PASSWORD }}
         run: gradle --no-daemon assembleRelease
 
       - name: Verify release APK signature
-        if: ${{ env.ALAI_RELEASE_KEYSTORE_BASE64 != '' && env.ALAI_RELEASE_STORE_PASSWORD != '' && env.ALAI_RELEASE_KEY_ALIAS != '' && env.ALAI_RELEASE_KEY_PASSWORD != '' }}
+        if: steps.release-signing.outputs.configured == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -94,7 +110,7 @@ jobs:
           "$APKSIGNER" verify --verbose --print-certs "$APK"
 
       - name: Upload verified release APK
-        if: ${{ env.ALAI_RELEASE_KEYSTORE_BASE64 != '' && env.ALAI_RELEASE_STORE_PASSWORD != '' && env.ALAI_RELEASE_KEY_ALIAS != '' && env.ALAI_RELEASE_KEY_PASSWORD != '' }}
+        if: steps.release-signing.outputs.configured == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: antivirus-al-ai-release-${{ github.run_number }}
@@ -103,5 +119,5 @@ jobs:
           retention-days: 30
 
       - name: Explain release signing was not run
-        if: ${{ env.ALAI_RELEASE_KEYSTORE_BASE64 == '' || env.ALAI_RELEASE_STORE_PASSWORD == '' || env.ALAI_RELEASE_KEY_ALIAS == '' || env.ALAI_RELEASE_KEY_PASSWORD == '' }}
-        run: echo "Release signing skipped because one or more ALAI release GitHub Actions secrets are not configured. Debug validation still runs."
+        if: always() && steps.release-signing.outputs.configured != 'true'
+        run: echo "Release signing runs only by manual dispatch on main and only when all release credentials are configured. Debug validation does not receive those credentials."
