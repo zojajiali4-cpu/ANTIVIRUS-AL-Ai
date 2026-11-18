@@ -1,0 +1,9 @@
+name = "antivirus-al-ai-api"
+main = "src/index.js"
+compatibility_date = "2026-11-17"
+workers_dev = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "antivirus-al-ai-threat-intel"
+database_id = "ba528591-877f-4683-a611-266d1a472b2e"
