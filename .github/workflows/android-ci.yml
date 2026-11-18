@@ -137,6 +137,9 @@ jobs:
     timeout-minutes: 45
     strategy:
       fail-fast: false
+      # Run one emulator at a time. Three concurrent Android VMs exhausted
+      # runner ADB/package services and caused false-negative smoke failures.
+      max-parallel: 1
       matrix:
         api-level: [33, 35, 36]
     steps:
