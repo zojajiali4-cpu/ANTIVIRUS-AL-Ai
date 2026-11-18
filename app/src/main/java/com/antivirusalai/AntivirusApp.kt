@@ -5,7 +5,6 @@ import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import android.os.Build
-import android.os.Environment
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -135,6 +134,12 @@ private enum class MainTab(val key: String) {
     VAULT("vault")
 }
 
+private enum class AppInventoryConsentAction {
+    DEVICE_SCAN,
+    PROTECTION,
+    SETTINGS
+}
+
 @Composable
 fun AntivirusApp(inPictureInPicture: Boolean = false) {
     val context = LocalContext.current
@@ -163,12 +168,29 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
     var featureInfo by remember { mutableStateOf<String?>(null) }
     var showPrivacy by remember { mutableStateOf(false) }
     var showStoragePermissionRationale by remember { mutableStateOf(false) }
+    var showAppInventoryDisclosure by remember { mutableStateOf(false) }
+    var pendingInventoryConsentAction by remember { mutableStateOf<AppInventoryConsentAction?>(null) }
+    var appInventoryConsent by remember { mutableStateOf(InstalledAppInventoryConsent.isGranted(context)) }
     var showAbout by remember { mutableStateOf(false) }
     var vaultRefresh by remember { mutableStateOf(0) }
     var protectionEnabled by remember { mutableStateOf(ProtectionRuntime.isEnabled(context)) }
     val fa = language == "fa"
 
-    val toggleProtection: (Boolean) -> Unit = { enabled ->
+    val refreshProtectionService: () -> Unit = {
+        if (protectionEnabled) {
+            runCatching {
+                context.startForegroundService(Intent(context, ProtectionService::class.java))
+            }.onFailure {
+                errorMessage = tr(
+                    fa,
+                    "وضعیت سرویس محافظت به‌روزرسانی نشد؛ برنامه را دوباره باز کن و وضعیت اعلان را بررسی کن.",
+                    "Protection service coverage could not be refreshed; reopen the app and check its notification."
+                )
+            }
+        }
+    }
+
+    val performProtectionToggle: (Boolean) -> Unit = { enabled ->
         if (enabled) {
             try {
                 ProtectionRuntime.setEnabled(context, true)
@@ -176,8 +198,8 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
                 protectionEnabled = true
                 notice = tr(
                     fa,
-                    "محافظت فعال شد؛ اعلان دائمی وضعیت آن را نشان می‌دهد.",
-                    "Protection is active; its ongoing notification shows the service status."
+                    "سرویس محافظت شروع شد؛ دامنه پایش در اعلان دائمی سرویس نمایش داده می‌شود.",
+                    "The protection service started; its ongoing notification shows the actual monitoring coverage."
                 )
             } catch (error: Exception) {
                 ProtectionRuntime.setEnabled(context, false)
@@ -193,6 +215,17 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
             context.stopService(Intent(context, ProtectionService::class.java))
             protectionEnabled = false
             notice = tr(fa, "محافظت متوقف شد.", "Protection has been stopped.")
+        }
+    }
+
+    val toggleProtection: (Boolean) -> Unit = { enabled ->
+        if (!enabled) {
+            performProtectionToggle(false)
+        } else if (!appInventoryConsent) {
+            pendingInventoryConsentAction = AppInventoryConsentAction.PROTECTION
+            showAppInventoryDisclosure = true
+        } else {
+            performProtectionToggle(true)
         }
     }
 
@@ -311,7 +344,7 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
     val storageSettingsLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) {
-        if (DeviceScanEngine.hasBroadStorageAccess()) {
+        if (DeviceScanEngine.hasBroadStorageAccess(context)) {
             executeDeviceScan(pendingDeepScan)
         } else {
             // The user declined broad shared-storage access. Still scan readable
@@ -336,11 +369,11 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
         )
     }
 
-    val launchDeviceScan: (Boolean) -> Unit = { deep ->
+    val requestDeviceScan: (Boolean) -> Unit = { deep ->
         if (!scanning) {
             pendingDeepScan = deep
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                if (DeviceScanEngine.hasBroadStorageAccess()) {
+                if (DeviceScanEngine.hasBroadStorageAccess(context)) {
                     executeDeviceScan(deep)
                 } else {
                     showStoragePermissionRationale = true
@@ -351,6 +384,18 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
                 executeDeviceScan(deep)
             } else {
                 legacyStoragePermissionLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
+            }
+        }
+    }
+
+    val launchDeviceScan: (Boolean) -> Unit = { deep ->
+        if (!scanning) {
+            pendingDeepScan = deep
+            if (!appInventoryConsent) {
+                pendingInventoryConsentAction = AppInventoryConsentAction.DEVICE_SCAN
+                showAppInventoryDisclosure = true
+            } else {
+                requestDeviceScan(deep)
             }
         }
     }
@@ -592,6 +637,22 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
 
                             else -> SettingsScreen(
                                 fa = fa,
+                                appInventoryConsent = appInventoryConsent,
+                                onManageAppInventoryConsent = {
+                                    if (appInventoryConsent) {
+                                        InstalledAppInventoryConsent.setGranted(context, false)
+                                        appInventoryConsent = false
+                                        refreshProtectionService()
+                                        notice = tr(
+                                            fa,
+                                            "رضایت بررسی فهرست برنامه‌ها لغو شد. اسکن‌های بعدی و پایش نصب برنامه‌ها از این فهرست استفاده نمی‌کنند.",
+                                            "Installed-app inventory consent was revoked. Future scans and package-install monitoring will no longer use that inventory."
+                                        )
+                                    } else {
+                                        pendingInventoryConsentAction = AppInventoryConsentAction.SETTINGS
+                                        showAppInventoryDisclosure = true
+                                    }
+                                },
                                 onLanguageChange = { language = if (fa) "en" else "fa" },
                                 onPrivacy = { showPrivacy = true },
                                 onAbout = { showAbout = true },
@@ -706,6 +767,106 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
         )
     }
 
+    if (showAppInventoryDisclosure) {
+        AlertDialog(
+            onDismissRequest = {
+                showAppInventoryDisclosure = false
+                pendingInventoryConsentAction = null
+            },
+            containerColor = SurfaceRaised,
+            title = {
+                Text(
+                    tr(fa, "اجازه بررسی فهرست برنامه‌ها", "Allow installed-app inspection"),
+                    color = TextPrimary
+                )
+            },
+            text = {
+                Text(
+                    tr(
+                        fa,
+                        "برای شناسایی APKهای برنامه‌های نصب‌شده، برنامه می‌تواند نام بسته‌ها و مسیر فایل‌های پایه و split APK قابل‌خواندن را از Android دریافت و فقط روی همین دستگاه بررسی کند. این اطلاعات برای تبلیغات یا تحلیل بازاریابی استفاده نمی‌شوند و به سرور ارسال نمی‌شوند. Android همچنان داده خصوصی برنامه‌های دیگر و پوشه‌های محدودشده را در اختیار این برنامه نمی‌گذارد. این رضایت جدا از مجوز «مدیریت همه فایل‌ها» است و هر زمان از تنظیمات برنامه قابل لغو است. با رد این گزینه، اسکن حافظه مشترک در صورت داشتن مجوز خودش ادامه می‌یابد، اما فهرست برنامه‌ها بررسی نمی‌شود.",
+                        "To inspect installed APKs, the app can read package names and accessible base/split APK paths from Android and analyze them locally on this device. This information is not used for advertising or marketing analytics and is not sent to the server. Android still blocks other apps' private data and restricted folders. This consent is separate from All files access and can be revoked in app settings. If you decline, shared-storage scanning can still run when its separate permission is granted, but installed-app inventory will not be inspected."
+                    ),
+                    color = TextSecondary
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        InstalledAppInventoryConsent.setGranted(context, true)
+                        appInventoryConsent = true
+                        showAppInventoryDisclosure = false
+                        when (pendingInventoryConsentAction) {
+                            AppInventoryConsentAction.DEVICE_SCAN -> {
+                                refreshProtectionService()
+                                requestDeviceScan(pendingDeepScan)
+                            }
+                            AppInventoryConsentAction.PROTECTION -> performProtectionToggle(true)
+                            AppInventoryConsentAction.SETTINGS, null -> {
+                                refreshProtectionService()
+                                notice = tr(
+                                    fa,
+                                    "رضایت بررسی محلی فهرست برنامه‌ها ثبت شد.",
+                                    "Consent for local installed-app inspection was saved."
+                                )
+                            }
+                        }
+                        pendingInventoryConsentAction = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = BrandTeal)
+                ) {
+                    Text(tr(fa, "موافقم و ادامه بده", "Agree and continue"), color = AppBackground)
+                }
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            val action = pendingInventoryConsentAction
+                            showAppInventoryDisclosure = false
+                            pendingInventoryConsentAction = null
+                            when (action) {
+                                AppInventoryConsentAction.DEVICE_SCAN -> {
+                                    if (DeviceScanEngine.hasBroadStorageAccess(context)) {
+                                        requestDeviceScan(pendingDeepScan)
+                                    } else {
+                                        notice = tr(
+                                            fa,
+                                            "بدون رضایت بررسی فهرست برنامه‌ها و بدون مجوز حافظه مشترک، اسکن خودکار دستگاه پوشش قابل‌اتکایی ندارد. می‌توانی یک فایل را جداگانه از انتخاب‌گر Android اسکن کنی.",
+                                            "Without installed-app consent or shared-storage access, an automatic device scan has no useful coverage. You can still scan an individual file using Android's document picker."
+                                        )
+                                    }
+                                }
+                                AppInventoryConsentAction.PROTECTION -> {
+                                    if (DeviceScanEngine.hasBroadStorageAccess(context)) {
+                                        performProtectionToggle(true)
+                                    } else {
+                                        notice = tr(
+                                            fa,
+                                            "برای فعال‌سازی محافظت بدون پایش برنامه‌های نصب‌شده، ابتدا دسترسی حافظه مشترک را از تنظیمات Android فعال کن.",
+                                            "To enable file-only protection without installed-app monitoring, first grant shared-storage access in Android settings."
+                                        )
+                                    }
+                                }
+                                AppInventoryConsentAction.SETTINGS, null -> Unit
+                            }
+                        }
+                    ) {
+                        Text(tr(fa, "فقط فایل‌های حافظه", "Shared storage only"), color = TextPrimary)
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            showAppInventoryDisclosure = false
+                            pendingInventoryConsentAction = null
+                        }
+                    ) {
+                        Text(tr(fa, "انصراف", "Cancel"), color = TextPrimary)
+                    }
+                }
+            }
+        )
+    }
+
     if (showStoragePermissionRationale) {
         AlertDialog(
             onDismissRequest = { showStoragePermissionRationale = false },
@@ -720,8 +881,8 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
                 Text(
                     tr(
                         fa,
-                        "برای اسکن گسترده فایل‌های حافظه، Android مسیر رسمی «مدیریت همه فایل‌ها» را دارد. همچنین فهرست برنامه‌های نصب‌شده برای بررسی امنیتی محلی استفاده می‌شود. فایل‌ها و فهرست برنامه‌ها آپلود یا برای تبلیغات استفاده نمی‌شوند. با رد مجوز حافظه، برنامه همچنان APKهای نصب‌شده‌ای را که مسیر خواندنشان در دسترس باشد بررسی می‌کند؛ اما فایل‌های حافظه مشترک در این نوبت اسکن نمی‌شوند. پوشه‌های خصوصی برنامه‌های دیگر و Android/data و Android/obb همچنان خارج از دسترس هستند.",
-                        "Android provides the official All files access setting for broad shared-storage scanning. The installed-app inventory is also used for local security review. Files and app inventory are not uploaded or used for advertising. If broad storage access is declined, the app still checks installed APK components whose paths are readable, but shared-storage files are not scanned in that run. Other apps’ private folders and Android/data and Android/obb remain excluded."
+                        "برای اسکن گسترده فایل‌های حافظه مشترک، Android مسیر رسمی «مدیریت همه فایل‌ها» را دارد. رضایت جداگانه بررسی فهرست برنامه‌های نصب‌شده قبلاً ثبت شده است؛ این فهرست فقط روی دستگاه بررسی می‌شود و آپلود نمی‌شود. با رد مجوز حافظه، فقط APKهای برنامه‌هایی که Android مسیر خواندنشان را در اختیار می‌گذارد بررسی می‌شوند؛ فایل‌های حافظه مشترک در این نوبت اسکن نمی‌شوند. پوشه‌های خصوصی برنامه‌های دیگر و Android/data و Android/obb همچنان خارج از دسترس هستند.",
+                        "Android provides the official All files access setting for broad shared-storage scanning. Separate consent to inspect installed-app inventory has already been recorded; this inventory is analyzed on-device and is not uploaded. If broad storage access is declined, only installed APK components whose paths Android exposes as readable are checked; shared-storage files are not scanned in that run. Other apps' private folders and Android/data and Android/obb remain excluded."
                     ),
                     color = TextSecondary
                 )
@@ -779,8 +940,8 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
                 Text(
                     tr(
                         fa,
-                        "اسکن خودکار فقط پس از شروع توسط کاربر انجام می‌شود. فایل‌های قابل‌دسترسی حافظه اشتراکی و فهرست برنامه‌های نصب‌شده برای بررسی امنیتی روی خود دستگاه پردازش می‌شوند؛ محتوای فایل‌ها یا فهرست برنامه‌ها به سرور ارسال یا برای تبلیغات استفاده نمی‌شوند. Android همچنان پوشه‌های خصوصی برنامه‌های دیگر و Android/data و Android/obb را مسدود می‌کند. قرنطینه پس از تأیید کاربر نسخه رمزنگاری‌شده را بررسی می‌کند و فقط در صورت اجازه Android برای حذف منبع تلاش می‌کند.",
-                        "Scanning starts only when the user requests it. Accessible shared-storage files and the installed-app inventory are processed locally for security review; file contents and the app inventory are not sent to a server or used for advertising. Android still blocks other apps' private folders and protected areas such as Android/data and Android/obb. Quarantine verifies an encrypted copy first and attempts source deletion only after user confirmation and when Android permits it."
+                        "اسکن دستگاه فقط پس از شروع توسط کاربر انجام می‌شود. فهرست برنامه‌های نصب‌شده فقط پس از رضایت جداگانه و قابل‌لغو از تنظیمات برنامه بررسی می‌شود؛ نام بسته‌ها و مسیر APKهای قابل‌خواندن فقط روی دستگاه پردازش می‌شوند و به سرور یا سامانه تبلیغاتی ارسال نمی‌شوند. اسکن گسترده حافظه مشترک به مجوز جداگانه «مدیریت همه فایل‌ها» در Android نیاز دارد. Android همچنان پوشه‌های خصوصی برنامه‌های دیگر و Android/data و Android/obb را مسدود می‌کند. استعلام آنلاین هش نیز فقط پس از تأیید جداگانه، اثرانگشت SHA-256 را می‌فرستد؛ محتوای فایل، نام و مسیر آن ارسال نمی‌شوند. قرنطینه ابتدا نسخه رمزنگاری‌شده را راستی‌آزمایی می‌کند و حذف فایل مبدأ عملی جداگانه و نیازمند تأیید کاربر است.",
+                        "Device scans start only when requested by the user. Installed-app inventory is inspected only after separate, revocable consent in app settings; package names and readable APK paths are processed locally and are not sent to a server or advertising system. Broad shared-storage scanning requires the separate Android All files access setting. Android still blocks other apps' private folders and Android/data and Android/obb. Optional online hash reputation sends only the SHA-256 digest after separate confirmation; file contents, name and path are not sent. Quarantine verifies the encrypted copy first, and source deletion is a separate user-confirmed action."
                     ),
                     color = TextSecondary
                 )
@@ -2631,8 +2792,17 @@ private fun SecurityToolsScreen(
     var refreshingFeed by remember { mutableStateOf(false) }
     var feedMessage by remember { mutableStateOf<String?>(null) }
     var feedMessageSuccess by remember { mutableStateOf(false) }
-    val fileMonitoringAvailable = Build.VERSION.SDK_INT < Build.VERSION_CODES.R ||
-        Environment.isExternalStorageManager()
+    val fileMonitoringAvailable = DeviceScanEngine.hasBroadStorageAccess(context)
+    val legacyStoragePermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        feedMessage = if (granted) {
+            tr(fa, "دسترسی خواندن حافظه فعال شد؛ اکنون می‌توانی محافظت فایل‌ها را روشن کنی.", "Shared-storage read access is now granted; you can enable file protection.")
+        } else {
+            tr(fa, "مجوز خواندن حافظه داده نشد؛ پایش فایل‌ها در دسترس نیست.", "Storage read permission was denied; file monitoring is unavailable.")
+        }
+        feedMessageSuccess = granted
+    }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -2703,7 +2873,12 @@ private fun SecurityToolsScreen(
                                     Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
                                     Uri.parse("package:${context.packageName}")
                                 )
-                                runCatching { context.startActivity(settingsIntent) }
+                                runCatching { context.startActivity(settingsIntent) }.onFailure {
+                                    feedMessage = tr(fa, "تنظیمات دسترسی فایل باز نشد؛ از تنظیمات برنامه در Android وارد بخش دسترسی ویژه شو.", "Could not open all-files settings; open the app's Special app access page in Android settings.")
+                                    feedMessageSuccess = false
+                                }
+                            } else {
+                                legacyStoragePermissionLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
                             }
                         },
                         modifier = Modifier.fillMaxWidth()
@@ -3093,6 +3268,8 @@ private fun PlanCard(
 @Composable
 private fun SettingsScreen(
     fa: Boolean,
+    appInventoryConsent: Boolean,
+    onManageAppInventoryConsent: () -> Unit,
     onLanguageChange: () -> Unit,
     onPrivacy: () -> Unit,
     onAbout: () -> Unit,
@@ -3116,6 +3293,17 @@ private fun SettingsScreen(
             title = tr(fa, "حریم خصوصی و داده‌ها", "Privacy and data"),
             description = tr(fa, "نحوه استفاده از فایل‌ها و داده‌ها", "How files and data are handled"),
             onClick = onPrivacy
+        )
+        SettingsRow(
+            icon = "shield",
+            title = tr(fa, "بررسی فهرست برنامه‌های نصب‌شده", "Installed-app inventory inspection"),
+            description = if (appInventoryConsent) {
+                tr(fa, "رضایت داده شده؛ بررسی محلی فعال است", "Consent granted; local inspection enabled")
+            } else {
+                tr(fa, "رضایت داده نشده؛ فهرست برنامه‌ها بررسی نمی‌شود", "No consent; installed-app inventory is not inspected")
+            },
+            action = if (appInventoryConsent) tr(fa, "لغو", "Revoke") else tr(fa, "اجازه", "Allow"),
+            onClick = onManageAppInventoryConsent
         )
         SettingsRow(
             icon = "info",
