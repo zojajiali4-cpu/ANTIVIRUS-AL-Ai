@@ -14,10 +14,11 @@ Privacy-first Android security scanner. Current Android milestone: **0.3.0 (vers
 - Bounded ZIP/APK structure analysis, DEX header validation, selected static API-reference checks, and ELF header/symbol inspection. No archive entry or native library is extracted for execution.
 - Multi-signal heuristics combine manifest capabilities, DEX API references, native symbol references, and archive anomalies. Static references are leads for review, not proof of execution or malware.
 - ECDSA P-256 signed-feed verification with a pinned public key, strict format, expiry, monotonic version checks, and atomic private-storage replacement.
-- Hash-reputation and content-signature verdicts are separate evidence sources. ML feature extraction is implemented, but model inference is NOT_CONFIGURED until a licensed labelled dataset and independent validation exist.
+- Hash-reputation and content-signature verdicts are separate evidence sources. Optional cloud hash reputation requires explicit confirmation and sends only the SHA-256 digest; it does not override the local verdict. ML feature extraction is implemented, but model inference is NOT_CONFIGURED until a licensed labelled dataset and independent validation exist.
+- Offline URL structure inspection is available from Security Tools. URLs are not opened, resolved, followed or sent to a server; this heuristic is not a complete phishing detector.
 - WorkManager refresh scheduling for both signed hash intelligence and the optional signed content-rule bundle. Network/battery constraints and Android Doze may delay work; this is not continuous device monitoring.
 - AES-GCM private quarantine vault with verified-copy creation, listing, restore, and removal APIs. Source-removal action is restricted to malware/PUA/suspicious verdicts, requires explicit user confirmation and a verified copy, and can still be refused by Android or the document provider. A full quarantine-management screen remains outstanding.
-- File contents and file hashes are not uploaded by the scanning path. The app downloads only public signed hash-intelligence and content-rule metadata bundles.
+- File contents, filenames and paths are not uploaded by the local scanning path. A separate optional cloud reputation action sends only the SHA-256 digest after explicit confirmation. The app downloads public signed hash-intelligence and content-rule metadata bundles.
 
 ## Live threat-feed activation
 
@@ -52,7 +53,7 @@ Android uses SHA-256 entries for local file reputation. It parses network IOCs s
 - Maximum individual file size: 200 MiB.
 - Android-protected private app locations remain inaccessible and excluded.
 - The local hash database currently contains only a benign development fixture, not production malware hashes. The C++ matcher currently has only a harmless self-test rule until a signed production content-rule bundle is published. APK/DEX/ELF/ZIP structural checks and bounded nested-archive inspection are implemented, but are not a substitute for an independently validated malware signature corpus.
-- As of 2026-11-08, the `security-feed` branch and published `threat-feed/latest.alfeed` do not exist yet. Until a signed feed is published and installed, the app must show threat intelligence as unavailable.
+- At this integration revision, no production-signed feed or populated production threat-intelligence dataset has been verified as published and installed. Until the owner completes the gated publishing workflow and a device verifies and installs the bundle, threat intelligence must be shown as unavailable or incomplete; an empty dataset is never a clean verdict.
 
 See [Scanning coverage and known limitations](docs/SCANNING_COVERAGE.md) for the exact boundaries and release gates. These limits do not make the app a full or independently validated antivirus product.
 
@@ -66,13 +67,13 @@ Quarantine can remove an accessible source file only when Android/the provider p
 
 ## Validation status
 
-Automated unit tests cover the signed-feed parser, signature tampering/replay/expiry rejection, EICAR stream matching, and selected static heuristics. Emulator instrumentation covers launch/artwork and AES-GCM quarantine integrity, restore, and deletion; the current API 33/35 run must pass before this revision is treated as validated. No independent AV-TEST/AV-Comparatives-style malware detection report has been completed; no detection-rate or false-positive-rate claim is made.
+Automated unit tests cover the signed-feed parser, signature tampering/replay/expiry rejection, EICAR stream matching, selected static heuristics, offline URL parsing, cloud-client validation, and release invariants for launcher resources and core product wiring. Emulator instrumentation covers launch/artwork and AES-GCM quarantine integrity, restore, and deletion. API 33 and 35 are hard CI gates; API 36 remains advisory while the hosted emulator has intermittent Package Manager/ADB failures. No independent AV-TEST/AV-Comparatives-style malware detection report has been completed; no detection-rate or false-positive-rate claim is made.
 
 See `docs/DETECTION_VALIDATION.md`, `docs/THREAT_INTEL_OPERATIONS.md`, and `docs/ANDROID_LIMITATIONS.md`.
 
 ## Build
 
-The Android package version is `0.3.0` (`versionCode=3`). GitHub Actions publishes `ANTIVIRUS-AL-AI-v0.3.0-debug.apk` with source commit, workflow run ID, and SHA-256 metadata. Debug APKs are for testing only and are not production-signed release packages. CI runs unit tests, Android lint, APK assembly, and emulator instrumentation tests.
+The Android package version is `0.3.0` (`versionCode=3`). GitHub Actions publishes `ANTIVIRUS-AL-AI-v0.3.0-debug.apk` with source commit, workflow run ID, signer-certificate fingerprint, and SHA-256 metadata. This debug APK is for testing only and is not a production-signed release package. The Store currently previews plans; Google Play Billing is not connected.
 
 
 ## Reviewed Android content-rule seed
