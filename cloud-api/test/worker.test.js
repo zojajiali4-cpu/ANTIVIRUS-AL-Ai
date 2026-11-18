@@ -16,7 +16,7 @@ function makeD1({ fail = false } = {}) {
   const statements = [];
   return {
     statements,
-    async prepare(sql) {
+    prepare(sql) {
       if (fail) throw new Error("simulated D1 outage");
       return {
         bind(...params) {
