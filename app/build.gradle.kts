@@ -28,9 +28,9 @@ android {
         versionCode = providers.environmentVariable("ALAI_VERSION_CODE").orElse("2").get().toInt()
         versionName = "0.2.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        buildConfigField("String", "ALAI_THREAT_FEED_URL", "\"${providers.environmentVariable("ALAI_THREAT_FEED_URL").orElse("").get()}\"")
-        buildConfigField("String", "ALAI_THREAT_FEED_PUBLIC_KEY_B64", "\"${providers.environmentVariable("ALAI_THREAT_FEED_PUBLIC_KEY_B64").orElse("").get()}\"")
-        buildConfigField("String", "ALAI_THREAT_FEED_KEY_ID", "\"${providers.environmentVariable("ALAI_THREAT_FEED_KEY_ID").orElse("alai-feed-2026").get()}\"")
+        buildConfigField("String", "ALAI_THREAT_FEED_URL", "\"${providers.environmentVariable("ALAI_THREAT_FEED_URL").orElse("https://raw.githubusercontent.com/zojajiali4-cpu/ANTIVIRUS-AL-Ai/security-feed/threat-feed/latest.alfeed").get()}\"")
+        buildConfigField("String", "ALAI_THREAT_FEED_PUBLIC_KEY_B64", "\"${providers.environmentVariable("ALAI_THREAT_FEED_PUBLIC_KEY_B64").orElse("MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEM1szM5WLCBP0KDTXsrVfBdPxErB4sVo4mhY+duhjfDP5MwASTx0pLor3mSL7dLRwX/gZpi6odLquz/BfIGSafg==").get()}\"")
+        buildConfigField("String", "ALAI_THREAT_FEED_KEY_ID", "\"${providers.environmentVariable("ALAI_THREAT_FEED_KEY_ID").orElse("alai-release-2026").get()}\"")
         buildConfigField("String", "ALAI_API_BASE_URL", "\"${providers.environmentVariable("ALAI_API_BASE_URL").orElse("https://antivirus-al-ai-api.zojajiali4.workers.dev").get()}\"")
     }
     signingConfigs {
