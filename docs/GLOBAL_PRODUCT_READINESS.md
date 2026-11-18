@@ -54,7 +54,7 @@ A clean result must never be described as proof that a file is safe. Android pla
 - [ ] Use Cloudflare Worker + D1 (or equivalent managed services) for API, threat-feed metadata, abuse controls, and minimal operational records.
 - [ ] Keep publisher and service credentials in backend secrets; never embed privileged API keys in the APK.
 - [ ] Default to hash-only reputation queries with explicit opt-in and clear retention/deletion policy.
-- [ ] Add rate limits, request validation, audit events, health checks, backups, migrations, and incident response.
+- [ ] Add request audit events, health checks, backups, migrations, and incident response. The Worker code now uses HMAC-SHA-256 for keyed IP rate-limit identifiers and fails closed when D1 or the rate-limit key is unavailable; this still needs a reviewed Cloudflare deployment and operational validation.
 - Acceptance: documented API, privacy review, automated security tests, rate-limit tests, backup/restore drill.
 
 ### P3 — Safe device tools
