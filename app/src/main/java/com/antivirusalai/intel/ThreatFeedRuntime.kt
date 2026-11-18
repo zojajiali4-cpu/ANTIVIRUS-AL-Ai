@@ -101,7 +101,7 @@ object ThreatFeedRuntime {
                     val count = input.read(buffer)
                     if (count < 0) break
                     if (output.size() + count > SignedThreatFeedParser.MAX_FEED_BYTES) {
-                        return ThreatFeedRefreshResult.Failed("Threat feed exceeds the 2 MiB safety limit.")
+                        return ThreatFeedRefreshResult.Failed("Threat feed exceeds the 4 MiB safety limit.")
                     }
                     output.write(buffer, 0, count)
                 }
