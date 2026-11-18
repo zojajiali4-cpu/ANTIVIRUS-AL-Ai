@@ -15,12 +15,13 @@ class InstalledAppInventoryConsentTest {
     private val context: Context = ApplicationProvider.getApplicationContext()
 
     @Before
+    fun clearBefore() {
+        clearStoredConsent()
+    }
+
     @After
-    fun clearConsentForIsolation() {
-        context.getSharedPreferences("alai-privacy-consent", Context.MODE_PRIVATE)
-            .edit()
-            .clear()
-            .commit()
+    fun clearAfter() {
+        clearStoredConsent()
     }
 
     @Test
@@ -35,5 +36,12 @@ class InstalledAppInventoryConsentTest {
 
         InstalledAppInventoryConsent.setGranted(context, false)
         assertFalse(InstalledAppInventoryConsent.isGranted(context))
+    }
+
+    private fun clearStoredConsent() {
+        context.getSharedPreferences("alai-privacy-consent", Context.MODE_PRIVATE)
+            .edit()
+            .clear()
+            .commit()
     }
 }
