@@ -2927,6 +2927,8 @@ private fun SecurityToolsScreen(
             Text(tr(fa, "ابزارهای اصلی در یک‌جا", "Your essential security tools"), color = TextSecondary, fontSize = 12.sp)
         }
 
+        LocalUrlRiskCard(fa = fa)
+
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(23.dp),
@@ -4025,7 +4027,7 @@ private fun featureTitle(fa: Boolean, feature: String): String = when (feature) 
 private fun featureDescription(fa: Boolean, feature: String): String = when (feature) {
     "quarantine" -> tr(fa, "با تأیید کاربر، نسخه AES-GCM در فضای خصوصی ذخیره و هش آن بررسی می‌شود؛ سپس حذف فایل مبدأ فقط در صورت اجازه Android یا ارائه‌دهنده فایل درخواست می‌شود. موتور ذخیره‌سازی فهرست، بازیابی و حذف را پشتیبانی می‌کند، اما صفحه مدیریتی کامل قرنطینه هنوز در رابط کاربری تکمیل نشده است.", "After user confirmation, an AES-GCM encrypted copy is stored in private app storage and its hash is verified. Source deletion is requested only if Android or the document provider allows it. The storage engine supports listing, restore and deletion, but a complete quarantine-management screen is not yet available in the UI.")
     "vulnerability" -> tr(fa, "این ماژول هنوز نتیجه آسیب‌پذیری واقعی تولید نمی‌کند. مرحله بعدی شامل شناسایی SDKها و کتابخانه‌ها و تطبیق آن‌ها با منابع CVE معتبر است.", "This module does not yet produce vulnerability findings. Next steps include SDK and library inventory mapped to trusted CVE sources.")
-    "phishing" -> tr(fa, "بررسی URL با فهرست اعتبار و تحلیل دامنه هنوز متصل نشده است. هیچ لینک یا پیامی در پس‌زمینه خوانده نمی‌شود.", "URL reputation and domain analysis are not connected yet. No links or messages are read in the background.")
+    "phishing" -> tr(fa, "بررسی ساختاری لینک به‌صورت آفلاین و روی دستگاه انجام می‌شود؛ لینک باز یا به اینترنت ارسال نمی‌شود. این بررسی اعتبار آنلاین دامنه یا محتوای صفحه را نمی‌سنجد و فیشینگ را قطعی تشخیص نمی‌دهد.", "URL structure is inspected offline on-device; the link is not opened or sent online. This does not check live domain reputation or page content and is not a definitive phishing verdict.")
     "network" -> tr(fa, "محافظ شبکه هنوز فعال نیست. پیاده‌سازی آن به طراحی شفاف DNS/VPN محلی و بررسی سیاست‌های Android و Google Play نیاز دارد.", "Network protection is not active. Implementation requires transparent local DNS/VPN design and Android/Google Play policy review.")
     "brain" -> tr(fa, "مسیر اسکن از هش‌های امضاشده، قواعد محتوایی امضاشده، تحلیل ایستای APK/DEX/ELF و امتیازدهی چندنشانه‌ای پشتیبانی می‌کند؛ اما این منابع تا انتشار و نصب بانک تولیدی معتبر فعال نیستند. مدل یادگیری ماشین هنوز NOT_CONFIGURED است و تحلیل رفتاری در sandbox اجرا نمی‌شود.", "The scan pipeline supports signed hash reputation, signed content rules, APK/DEX/ELF static analysis and multi-signal risk scoring. These production intelligence sources remain inactive until a valid feed and rule bundle are published and installed. On-device ML is still NOT_CONFIGURED, and runtime sandbox analysis is not active.")
     "selfdefense" -> tr(fa, "برنامه از تنظیمات پایه مانند غیرفعال‌بودن cleartext و backup استفاده می‌کند. پایش یکپارچگی زمان اجرا و دفاع در برابر دست‌کاری هنوز نیازمند توسعه و آزمون است.", "The app uses baseline controls such as disabled cleartext traffic and backup. Runtime integrity and anti-tamper monitoring still require implementation and testing.")
