@@ -53,7 +53,7 @@ object ProtectionRuntime {
     }
 }
 
-private data class PendingFileScan(val file: File, val canonicalPath: String)
+private data class PendingFileScan(val file: File, val allowedRoot: File, val canonicalPath: String)
 
 class ProtectionService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -118,16 +118,17 @@ class ProtectionService : Service() {
         super.onDestroy()
     }
 
-    private fun startAsForeground() {
+    private fun buildProtectionNotification(status: String): android.app.Notification {
         val stopIntent = Intent(this, ProtectionService::class.java).setAction(ACTION_STOP)
         val stopPendingIntent = PendingIntent.getService(
             this, 4109, stopIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+        return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_lock_lock)
-            .setContentTitle("ANTIVIRUS AL AI · محافظت فعال")
-            .setContentText("پایش فایل‌های قابل‌دسترسی و برنامه‌های تازه نصب‌شده")
+            .setContentTitle("ANTIVIRUS AL AI · وضعیت محافظت")
+            .setContentText(status)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(status))
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
@@ -135,7 +136,10 @@ class ProtectionService : Service() {
             .setSilent(true)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "توقف محافظت", stopPendingIntent)
             .build()
+    }
 
+    private fun startAsForeground() {
+        val notification = buildProtectionNotification("سرویس محافظت در حال راه‌اندازی است.")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(
                 NOTIFICATION_ID,
@@ -144,6 +148,13 @@ class ProtectionService : Service() {
             )
         } else {
             startForeground(NOTIFICATION_ID, notification)
+        }
+    }
+
+    private fun updateProtectionNotification(status: String) {
+        runCatching {
+            getSystemService(NotificationManager::class.java)
+                .notify(NOTIFICATION_ID, buildProtectionNotification(status))
         }
     }
 
@@ -188,10 +199,23 @@ class ProtectionService : Service() {
     }
 
     private fun startFileMonitoring() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
+        val storage = Environment.getExternalStorageDirectory()
+        val storageRoot = runCatching { storage.canonicalFile }.getOrNull()
+        if (storageRoot == null) {
+            updateProtectionNotification("مسیر حافظه مشترک قابل‌اعتبارسنجی نیست؛ پایش فایل‌ها شروع نشد.")
             return
         }
-        val storage = Environment.getExternalStorageDirectory()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
+            val status = if (packageReceiverRegistered) {
+                "پایش فایل‌های حافظه مشترک فعال نیست؛ دسترسی «همه فایل‌ها» داده نشده است. فقط رویداد نصب یا به‌روزرسانی برنامه‌ها، تا وقتی این سرویس فعال باشد، بررسی می‌شود."
+            } else {
+                "پایش فایل‌ها و رویداد نصب برنامه‌ها فعال نیست؛ مجوز حافظه داده نشده و گیرنده رویداد برنامه‌ها نیز در دسترس نیست."
+            }
+            updateProtectionNotification(status)
+            return
+        }
+
         val targets = listOf(
             File(storage, "Download"),
             File(storage, "Downloads"),
@@ -204,14 +228,31 @@ class ProtectionService : Service() {
         )
         val visited = ConcurrentHashMap.newKeySet<String>()
         targets.forEach { directory ->
-            if (directory.isDirectory) watchTree(directory, depth = 0, visited = visited)
+            val monitorRoot = runCatching { directory.canonicalFile }.getOrNull() ?: return@forEach
+            if (monitorRoot.isDirectory &&
+                SharedStoragePathPolicy.isWithinRoot(monitorRoot, storageRoot)
+            ) {
+                watchTree(monitorRoot, monitorRoot, depth = 0, visited = visited)
+            }
         }
+
+        val status = when {
+            observers.isNotEmpty() ->
+                "پایش محدود فعال است: ${observers.size} ناظر پوشه در مسیرهای مشترک و حداکثر عمق ۲. داده خصوصی برنامه‌ها و ترافیک شبکه پایش نمی‌شود."
+            packageReceiverRegistered ->
+                "هیچ پوشه حافظه مشترکی تحت پایش نیست؛ فقط رویداد نصب یا به‌روزرسانی برنامه‌ها هنگام فعال بودن سرویس بررسی می‌شود."
+            else ->
+                "هیچ مسیر فایلی یا رویداد نصب برنامه‌ای در این نشست تحت پایش نیست."
+        }
+        updateProtectionNotification(status)
     }
 
-    private fun watchTree(directory: File, depth: Int, visited: MutableSet<String>) {
+    private fun watchTree(directory: File, allowedRoot: File, depth: Int, visited: MutableSet<String>) {
         if (depth > MAX_WATCH_DEPTH || activeWatcherCount.get() >= MAX_WATCHERS) return
         val canonical = runCatching { directory.canonicalFile }.getOrNull() ?: return
-        if (!canonical.isDirectory || !synchronized(visited) { visited.add(canonical.path) }) return
+        if (!canonical.isDirectory || !SharedStoragePathPolicy.isWithinRoot(canonical, allowedRoot) ||
+            !synchronized(visited) { visited.add(canonical.path) }
+        ) return
         synchronized(watchedPaths) {
             if (!watchedPaths.add(canonical.path)) return
         }
@@ -240,15 +281,16 @@ class ProtectionService : Service() {
 
                     val relative = path ?: return
                     val target = File(canonical, relative)
+                    if (!SharedStoragePathPolicy.isWithinRoot(target, allowedRoot)) return
                     val isDirectory = target.isDirectory
                     if (isDirectory &&
                         ((event and FileObserver.CREATE) != 0 || (event and FileObserver.MOVED_TO) != 0)
                     ) {
-                        serviceScope.launch { watchTree(target, depth + 1, visited) }
+                        serviceScope.launch { watchTree(target, allowedRoot, depth + 1, visited) }
                     } else if (!isDirectory &&
                         ((event and FileObserver.CLOSE_WRITE) != 0 || (event and FileObserver.MOVED_TO) != 0)
                     ) {
-                        enqueueFileScan(target)
+                        enqueueFileScan(target, allowedRoot)
                     }
                 }
             }
@@ -266,7 +308,7 @@ class ProtectionService : Service() {
         if (depth < MAX_WATCH_DEPTH && observers.size < MAX_WATCHERS) {
             runCatching { canonical.listFiles() }.getOrNull()
                 ?.filter { it.isDirectory && !it.name.startsWith(".") }
-                ?.forEach { watchTree(it, depth + 1, visited) }
+                ?.forEach { watchTree(it, allowedRoot, depth + 1, visited) }
         }
     }
 
@@ -294,7 +336,7 @@ class ProtectionService : Service() {
                 try {
                     // Coalesce close/move notifications long enough for writers to settle.
                     delay(SCAN_EVENT_SETTLE_MS)
-                    scanFile(request.file)
+                    scanFile(request.file, request.allowedRoot)
                 } finally {
                     pendingScans.release(request.canonicalPath)
                     if (pendingScans.size() == 0) {
@@ -305,9 +347,9 @@ class ProtectionService : Service() {
         }
     }
 
-    private fun enqueueFileScan(file: File) {
+    private fun enqueueFileScan(file: File, allowedRoot: File) {
         val canonical = runCatching { file.canonicalFile }.getOrNull() ?: return
-        if (!canonical.isFile) return
+        if (!canonical.isFile || !SharedStoragePathPolicy.isWithinRoot(canonical, allowedRoot)) return
 
         val path = canonical.path
         when (pendingScans.reserve(path)) {
@@ -317,7 +359,7 @@ class ProtectionService : Service() {
                 return
             }
             PendingScanReservation.RESERVED -> {
-                if (scanQueue.trySend(PendingFileScan(canonical, path)).isFailure) {
+                if (scanQueue.trySend(PendingFileScan(canonical, allowedRoot, path)).isFailure) {
                     pendingScans.release(path)
                     reportScanQueueOverflow()
                 }
@@ -399,16 +441,23 @@ class ProtectionService : Service() {
         }
     }
 
-    private suspend fun scanFile(file: File, displayName: String = file.name) {
+    private suspend fun scanFile(file: File, allowedRoot: File, displayName: String = file.name) {
         try {
-            // Stale events are harmless, but a present file that cannot be read or
+            // Re-resolve immediately before opening the file: the path may have been
+            // replaced with a symlink after the FileObserver event was queued.
+            val canonical = runCatching { file.canonicalFile }.getOrNull()
+            if (canonical == null || !SharedStoragePathPolicy.isWithinRoot(canonical, allowedRoot)) {
+                postUnverifiedAlert(displayName, "The file path changed or escaped the monitored folder; it was not scanned.")
+                return
+            }
+            // A stale event is harmless, but a present file that cannot be read or
             // exceeds the scanner's hard ceiling must be surfaced as unverified.
-            if (!file.isFile) return
-            if (!file.canRead()) {
+            if (!canonical.isFile) return
+            if (!canonical.canRead()) {
                 postUnverifiedAlert(displayName, "The file is not readable by this app; no content scan was completed.")
                 return
             }
-            val size = file.length()
+            val size = canonical.length()
             if (size > ScanEngine.MAX_FILE_SIZE_BYTES) {
                 postUnverifiedAlert(
                     displayName,
@@ -417,7 +466,7 @@ class ProtectionService : Service() {
                 return
             }
 
-            val result = ScanEngine.scan(applicationContext, Uri.fromFile(file))
+            val result = ScanEngine.scan(applicationContext, Uri.fromFile(canonical))
             when (result.verdict) {
                 ScanVerdict.KNOWN_MALWARE,
                 ScanVerdict.POTENTIALLY_UNWANTED,
