@@ -83,5 +83,15 @@ class AndroidReleaseInvariantTests(unittest.TestCase):
         self.assertTrue((ROOT / "cloud-api/test/worker.test.js").is_file())
 
 
+    def test_offline_url_inspection_stays_local_and_visible(self):
+        app_source = (ROOT / "app/src/main/java/com/antivirusalai/AntivirusApp.kt").read_text(encoding="utf-8")
+        analyzer = (ROOT / "app/src/main/java/com/antivirusalai/security/UrlRiskAnalyzer.kt").read_text(encoding="utf-8")
+        card = (ROOT / "app/src/main/java/com/antivirusalai/LocalUrlRiskCard.kt").read_text(encoding="utf-8")
+
+        self.assertIn("LocalUrlRiskCard(fa = fa)", app_source)
+        self.assertIn("UrlRiskAnalyzer.analyze(address)", card)
+        self.assertIn("never opens, resolves, or contacts the supplied URL", analyzer)
+        self.assertIn("not a phishing verdict", analyzer)
+
 if __name__ == "__main__":
     unittest.main()
