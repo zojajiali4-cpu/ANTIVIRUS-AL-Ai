@@ -17,7 +17,6 @@ import android.os.FileObserver
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.antivirusalai.engine.DeviceScanEngine
-import com.antivirusalai.engine.DeviceScanEngine
 import com.antivirusalai.engine.ScanEngine
 import com.antivirusalai.engine.ScanVerdict
 import kotlinx.coroutines.CancellationException
