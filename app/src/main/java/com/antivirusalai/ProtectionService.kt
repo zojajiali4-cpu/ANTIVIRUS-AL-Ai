@@ -169,6 +169,12 @@ class ProtectionService : Service() {
     }
 
     private fun registerPackageMonitor() {
+        // Package inventory is a sensitive signal: registering package-change
+        // monitoring is gated by the same explicit, revocable in-app consent.
+        if (!InstalledAppInventoryConsent.isGranted(this)) {
+            packageReceiverRegistered = false
+            return
+        }
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_PACKAGE_ADDED)
             addAction(Intent.ACTION_PACKAGE_REPLACED)
@@ -335,6 +341,7 @@ class ProtectionService : Service() {
     }
 
     private suspend fun scanInstalledPackage(packageName: String) {
+        if (!InstalledAppInventoryConsent.isGranted(this)) return
         try {
             val info = if (Build.VERSION.SDK_INT >= 33) {
                 packageManager.getApplicationInfo(
