@@ -581,8 +581,8 @@ fun AntivirusApp() {
                 Text(
                     tr(
                         fa,
-                        "در این نسخه فقط فایلی که خودت از انتخاب‌گر Android مشخص می‌کنی خوانده می‌شود. محتوای فایل آپلود نمی‌شود. قرنطینه یک نسخه رمزنگاری‌شده در فضای خصوصی برنامه می‌سازد و فایل اصلی را حذف نمی‌کند. اسکن کامل دستگاه و دسترسی به داده خصوصی برنامه‌های دیگر در این نسخه وجود ندارد.",
-                        "This build reads only files you explicitly select through Android's document picker. File contents are not uploaded. Quarantine creates an encrypted copy in private app storage and does not delete the original. Full-device scanning and access to other apps' private data are not available."
+                        "در این نسخه فقط فایل‌هایی که از انتخاب‌گر رسمی Android انتخاب می‌کنی خوانده می‌شوند و محتوای فایل، نام و مسیر آن‌ها آپلود نمی‌شود. بررسی آنلاین URL فقط پس از ارسال نشانی توسط خودت اجرا می‌شود. استعلام اعتبار هش نیز اختیاری است و فقط پس از تأیید جداگانه، SHA-256 فایل و فراداده معمول درخواست شبکه مانند IP برای سرویس ارسال می‌شود. قرنطینه یک نسخه رمزنگاری‌شده در فضای خصوصی برنامه می‌سازد و فایل اصلی را حذف نمی‌کند. دسترسی به داده خصوصی برنامه‌های دیگر وجود ندارد.",
+                        "This build reads only files you explicitly select through Android's document picker; file contents, filenames and paths are not uploaded. URL checks run only after you submit an address. Hash reputation is optional and sends only the SHA-256 digest after separate confirmation; normal request metadata such as the IP address may also be processed by the service. Quarantine creates an encrypted copy in private app storage and does not delete the original. Other apps' private data is not accessible."
                     ),
                     color = TextSecondary
                 )
