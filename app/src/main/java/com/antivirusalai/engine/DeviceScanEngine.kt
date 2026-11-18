@@ -418,6 +418,16 @@ object DeviceScanEngine {
         failures: MutableList<FolderScanFailure>,
         maxFiles: Int
     ): PackageDiscoveryResult {
+        // QUERY_ALL_PACKAGES visibility is a sensitive inventory. Do not query
+        // installed applications until the user has separately consented in-app.
+        if (!com.antivirusalai.InstalledAppInventoryConsent.isGranted(context)) {
+            failures += FolderScanFailure(
+                "Installed app inventory",
+                "Installed-app inspection was skipped because the user has not granted in-app consent. Shared-storage scanning may continue independently."
+            )
+            return PackageDiscoveryResult(skippedComponents = 0, incomplete = true)
+        }
+
         val pm = context.packageManager
         val apps = try {
             if (Build.VERSION.SDK_INT >= 33) {
