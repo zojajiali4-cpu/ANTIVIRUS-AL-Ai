@@ -28,6 +28,7 @@ android {
         versionCode = 3
         versionName = "0.3.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("String", "ALAI_API_BASE_URL", "\"https://antivirus-al-ai-api.zojajiali4.workers.dev\"")
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
         }
