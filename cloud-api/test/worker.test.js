@@ -20,33 +20,34 @@ function makeD1({ fail = false } = {}) {
     statements,
     prepare(sql) {
       if (fail) throw new Error("simulated D1 outage");
+      const first = async (params = []) => {
+        if (sql.startsWith("SELECT hits FROM api_rate_limits")) {
+          const key = `${params[0]}:${params[1]}`;
+          return { hits: counters.get(key) || 0 };
+        }
+        if (sql.startsWith("SELECT MAX(version) AS v FROM signed_feeds")) {
+          return { v: feeds.size ? Math.max(...feeds.keys()) : null };
+        }
+        if (sql.startsWith("SELECT version,expires_at,payload FROM signed_feeds")) {
+          return [...feeds.values()].sort((a,b)=>b.version-a.version)[0] || null;
+        }
+        return null;
+      };
+      const run = async (params = []) => {
+        if (sql.startsWith("INSERT INTO api_rate_limits")) {
+          const key = `${params[0]}:${params[1]}`;
+          counters.set(key, (counters.get(key) || 0) + 1);
+        } else if (sql.startsWith("INSERT INTO signed_feeds")) {
+          feeds.set(params[0], { version: params[0], issued_at: params[1], expires_at: params[2], payload: params[3] });
+        }
+        return { success: true };
+      };
       return {
+        first: () => first(),
+        run: () => run(),
         bind(...params) {
           statements.push({ sql, params });
-          return {
-            async run() {
-              if (sql.startsWith("INSERT INTO api_rate_limits")) {
-                const key = `${params[0]}:${params[1]}`;
-                counters.set(key, (counters.get(key) || 0) + 1);
-              } else if (sql.startsWith("INSERT INTO signed_feeds")) {
-                feeds.set(params[0], { version: params[0], issued_at: params[1], expires_at: params[2], payload: params[3] });
-              }
-              return { success: true };
-            },
-            async first() {
-              if (sql.startsWith("SELECT hits FROM api_rate_limits")) {
-                const key = `${params[0]}:${params[1]}`;
-                return { hits: counters.get(key) || 0 };
-              }
-              if (sql.startsWith("SELECT MAX(version) AS v FROM signed_feeds")) {
-                return { v: feeds.size ? Math.max(...feeds.keys()) : null };
-              }
-              if (sql.startsWith("SELECT version,expires_at,payload FROM signed_feeds")) {
-                return [...feeds.values()].sort((a,b)=>b.version-a.version)[0] || null;
-              }
-              return null;
-            }
-          };
+          return { first: () => first(params), run: () => run(params) };
         }
       };
     }
@@ -73,7 +74,7 @@ async function expectedHmac(ip, secret) {
   return [...new Uint8Array(signature)].map(byte => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function signedFeed({ version = 7, issued = 1_800_000_000, expires = 1_800_604_800, keyId = KEY_ID } = {}) {
+function signedFeed({ version = 7, issued = Math.floor(Date.now() / 1000) - 60, expires = Math.floor(Date.now() / 1000) + 86_400, keyId = KEY_ID } = {}) {
   const payload = [
     "ALAI-THREAT-FEED/1",
     `key_id=${keyId}`,
@@ -179,10 +180,8 @@ test("admin feed publishing accepts a valid ECDSA P-256 signature and serves the
 
 test("admin feed publishing rejects a tampered signature", async () => {
   const payload = signedFeed();
-  const lines = payload.trimEnd().split("\n");
-  const signature = lines.at(-1).slice("signature=".length);
-  lines[lines.length - 1] = `signature=${(signature[0] === "A" ? "B" : "A") + signature.slice(1)}`;
-  const response = await worker.fetch(request("/v1/admin/feed", { payload: lines.join("\n") + "\n" }, { authorization: "Bearer test-admin-token" }), feedEnvironment());
+  const tampered = payload.replace("TEST.FAMILY", "TEST.FAMILZ");
+  const response = await worker.fetch(request("/v1/admin/feed", { payload: tampered }, { authorization: "Bearer test-admin-token" }), feedEnvironment());
   assert.equal(response.status, 400);
   assert.equal((await json(response)).error, "INVALID_FEED_SIGNATURE");
 });
