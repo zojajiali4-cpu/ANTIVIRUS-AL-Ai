@@ -103,7 +103,6 @@ class ProtectionService : Service() {
         // Re-evaluate revocable app-inventory consent and storage access whenever
         // the activity asks the existing service to refresh its coverage.
         registerPackageMonitor()
-        registerPackageMonitor()
         startFileMonitoring()
         return START_STICKY
     }
@@ -217,6 +216,7 @@ class ProtectionService : Service() {
 
     private fun startFileMonitoring() {
         if (!DeviceScanEngine.hasBroadStorageAccess(this)) {
+            stopFileMonitoring()
             val status = when {
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && packageReceiverRegistered ->
                     "پایش فایل‌های حافظه مشترک فعال نیست؛ دسترسی «مدیریت همه فایل‌ها» داده نشده است. فقط رویداد نصب برنامه‌ها، با رضایت قبلی، پایش می‌شود."
@@ -266,6 +266,20 @@ class ProtectionService : Service() {
                 "در این نشست هیچ پوشه فایل یا رویداد نصب برنامه‌ای تحت پایش نیست."
         }
         updateProtectionNotification(status)
+    }
+
+    /**
+     * Immediately detach every watcher when Android storage access is revoked.
+     * The pending scan queue is still bounded; scanFile also re-checks access
+     * before opening a queued path, so stale events cannot continue scanning.
+     */
+    private fun stopFileMonitoring() {
+        observers.toList().forEach { observer ->
+            runCatching { observer.stopWatching() }
+            if (observers.remove(observer)) releaseWatcherSlot()
+        }
+        observers.clear()
+        synchronized(watchedPaths) { watchedPaths.clear() }
     }
 
     private fun watchTree(directory: File, allowedRoot: File, depth: Int, visited: MutableSet<String>) {
@@ -423,6 +437,10 @@ class ProtectionService : Service() {
             // A readable split cannot hide a missing/unreadable base APK component.
             var incomplete = !hasBaseApkPath
             for (path in apkPaths) {
+                if (!InstalledAppInventoryConsent.isGranted(this)) {
+                    incomplete = true
+                    break
+                }
                 val apk = File(path)
                 if (!apk.isFile || !apk.canRead() || apk.length() <= 0L ||
                     apk.length() > ScanEngine.MAX_FILE_SIZE_BYTES
@@ -465,6 +483,10 @@ class ProtectionService : Service() {
 
     private suspend fun scanFile(file: File, allowedRoot: File, displayName: String = file.name) {
         try {
+            if (!DeviceScanEngine.hasBroadStorageAccess(this)) {
+                postUnverifiedAlert(displayName, "Shared-storage access was revoked before this queued file could be scanned.")
+                return
+            }
             // Re-resolve immediately before opening: a queued path may have been
             // replaced with a symbolic link or redirected outside the monitored root.
             val canonical = runCatching { file.canonicalFile }.getOrNull()
