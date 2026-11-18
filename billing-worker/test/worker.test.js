@@ -6,7 +6,7 @@ if (!globalThis.crypto) {
   Object.defineProperty(globalThis, "crypto", { value: webcrypto });
 }
 
-const { default: worker } = await import("../src/index.js");
+const { default: worker, activateOrder } = await import("../src/index.js");
 const encoder = new TextEncoder();
 const RATE_SALT = "d3".repeat(32);
 const CLIENT_IP = "198.51.100.23";
@@ -244,4 +244,117 @@ test("Stripe webhook rejects an invalid signature", async () => {
     { STRIPE_WEBHOOK_SECRET: "stripe-webhook-test-secret" }
   );
   assert.equal(response.status, 400);
+});
+
+
+function makeActivationD1({ expired = false } = {}) {
+  const order = {
+    id: ORDER_ID,
+    customer_id: "customer-test",
+    plan_code: "PLUS_MONTHLY",
+    status: "pending",
+    expires_at: expired ? "2000-01-01T00:00:00.000Z" : "2099-01-01T00:00:00.000Z",
+    provider_reference: null,
+    paid_at: null
+  };
+  const subscriptions = [];
+  return {
+    order,
+    subscriptions,
+    prepare(sql) {
+      return {
+        sql,
+        params: [],
+        bind(...params) {
+          this.params = params;
+          return this;
+        },
+        async first() {
+          if (this.sql.startsWith("SELECT * FROM orders WHERE id=?")) {
+            return { ...order };
+          }
+          if (this.sql.startsWith("SELECT status,provider_reference FROM orders WHERE id=?")) {
+            return { status: order.status, provider_reference: order.provider_reference };
+          }
+          return null;
+        }
+      };
+    },
+    async batch(statements) {
+      const update = statements[0];
+      const insert = statements[1];
+      let changedOrder = 0;
+      if (update.sql.startsWith("UPDATE orders SET status='paid'")) {
+        const [paidAt, reference, orderId, expiryFloor] = update.params;
+        if (order.id === orderId && order.status === "pending" && order.expires_at >= expiryFloor) {
+          order.status = "paid";
+          order.paid_at = paidAt;
+          order.provider_reference = reference;
+          changedOrder = 1;
+        }
+      }
+      let insertedSubscription = 0;
+      if (insert.sql.startsWith("INSERT OR IGNORE INTO subscriptions")) {
+        const [id, customerId, planCode, orderId, startsAt, endsAt, requiredOrderId, paidAt, reference] = insert.params;
+        const exists = subscriptions.some(item => item.order_id === orderId);
+        if (
+          !exists &&
+          order.id === requiredOrderId &&
+          order.status === "paid" &&
+          order.paid_at === paidAt &&
+          order.provider_reference === reference
+        ) {
+          subscriptions.push({ id, customer_id: customerId, plan_code: planCode, order_id: orderId, starts_at: startsAt, ends_at: endsAt });
+          insertedSubscription = 1;
+        }
+      }
+      return [
+        { success: true, meta: { changes: changedOrder } },
+        { success: true, meta: { changes: insertedSubscription } }
+      ];
+    }
+  };
+}
+
+test("payment activation stores provider reference and is idempotent for duplicate callbacks", async () => {
+  const DB = makeActivationD1();
+  const env = { DB };
+  const first = await activateOrder(env, ORDER_ID, "provider-ref-123");
+  const duplicate = await activateOrder(env, ORDER_ID, "provider-ref-123");
+
+  assert.equal(first, true);
+  assert.equal(duplicate, true);
+  assert.equal(DB.order.status, "paid");
+  assert.equal(DB.order.provider_reference, "provider-ref-123");
+  assert.equal(DB.subscriptions.length, 1);
+});
+
+test("concurrent callbacks with the same payment reference create one subscription", async () => {
+  const DB = makeActivationD1();
+  const env = { DB };
+  const results = await Promise.all([
+    activateOrder(env, ORDER_ID, "provider-ref-concurrent"),
+    activateOrder(env, ORDER_ID, "provider-ref-concurrent")
+  ]);
+
+  assert.deepEqual(results, [true, true]);
+  assert.equal(DB.subscriptions.length, 1);
+});
+
+test("a different provider reference cannot re-activate an already paid order", async () => {
+  const DB = makeActivationD1();
+  const env = { DB };
+  assert.equal(await activateOrder(env, ORDER_ID, "provider-ref-original"), true);
+  assert.equal(await activateOrder(env, ORDER_ID, "provider-ref-other"), false);
+  assert.equal(DB.order.provider_reference, "provider-ref-original");
+  assert.equal(DB.subscriptions.length, 1);
+});
+
+test("expired orders and missing provider references cannot activate", async () => {
+  const expiredDB = makeActivationD1({ expired: true });
+  const emptyReferenceDB = makeActivationD1();
+  assert.equal(await activateOrder({ DB: expiredDB }, ORDER_ID, "ref-expired"), false);
+  assert.equal(await activateOrder({ DB: emptyReferenceDB }, ORDER_ID, ""), false);
+  assert.equal(expiredDB.subscriptions.length, 0);
+  assert.equal(emptyReferenceDB.subscriptions.length, 0);
 });
