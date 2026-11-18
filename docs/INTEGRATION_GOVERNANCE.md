@@ -9,7 +9,7 @@ New work should branch from this line and open a PR back into it. Do not continu
 ## Product invariants
 
 1. The application manifest must retain the launcher activity and both launcher icon references.
-2. Adaptive and legacy launcher resources must resolve to the checked-in guardian artwork.
+2. Adaptive and legacy launcher resources must resolve to the checked-in guardian artwork. CI pins the reviewed `guardian_robot.webp` Git blob; changing the artwork requires an intentional, reviewed update to that pin.
 3. APK packaging must report an application icon, not merely compile the source XML.
 4. The dashboard, scan center, Store, Vault, file scanner, device scan engine, protection service, quarantine vault, scan reports, and signed-feed verifier must remain present unless an explicitly reviewed product change replaces them.
 5. Online hash reputation is a separate, opt-in second opinion. It sends only SHA-256; a missing record is UNKNOWN and never means clean. It never silently changes the local verdict.
