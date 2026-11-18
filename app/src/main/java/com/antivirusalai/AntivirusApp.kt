@@ -90,6 +90,7 @@ import com.antivirusalai.engine.ScanTooLargeException
 import com.antivirusalai.engine.ScanVerdict
 import com.antivirusalai.intel.ThreatFeedRefreshResult
 import com.antivirusalai.intel.ThreatFeedRuntime
+import com.antivirusalai.intel.ThreatNetworkIndicator
 import com.antivirusalai.remediation.QuarantineManager
 import com.antivirusalai.security.UrlRiskAnalyzer
 import com.antivirusalai.security.UrlRiskAssessment
@@ -1728,16 +1729,21 @@ private fun DetailLine(label: String, value: String) {
 
 @Composable
 private fun UrlRiskCheckCard(fa: Boolean) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var address by rememberSaveable { mutableStateOf("") }
     var checking by remember { mutableStateOf(false) }
     var localAssessment by remember { mutableStateOf<UrlRiskAssessment?>(null) }
+    var localThreat by remember { mutableStateOf<ThreatNetworkIndicator?>(null) }
+    var localFeedMessage by remember { mutableStateOf<String?>(null) }
     var cloudAssessment by remember { mutableStateOf<CloudUrlCheckResult?>(null) }
     var cloudMessage by remember { mutableStateOf<String?>(null) }
 
     val runCheck: () -> Unit = {
         val assessment = UrlRiskAnalyzer.analyze(address)
         localAssessment = assessment
+        localThreat = null
+        localFeedMessage = null
         cloudAssessment = null
         cloudMessage = null
         if (assessment.level == UrlRiskLevel.INVALID) {
@@ -1745,9 +1751,21 @@ private fun UrlRiskCheckCard(fa: Boolean) {
         } else if (!checking) {
             checking = true
             scope.launch {
+                val checkedUrl = assessment.normalizedUrl ?: address
+                try {
+                    localThreat = withContext(Dispatchers.IO) {
+                        ThreatFeedRuntime.lookupNetworkIndicator(context.applicationContext, checkedUrl)
+                    }
+                } catch (_: Exception) {
+                    localFeedMessage = tr(
+                        fa,
+                        "فید محلی امضاشده در دسترس یا معتبر نیست.",
+                        "A current verified local feed is not available."
+                    )
+                }
                 try {
                     cloudAssessment = withContext(Dispatchers.IO) {
-                        CloudThreatApi.checkUrl(assessment.normalizedUrl ?: address)
+                        CloudThreatApi.checkUrl(checkedUrl)
                     }
                 } catch (error: Exception) {
                     cloudMessage = tr(
@@ -1841,6 +1859,28 @@ private fun UrlRiskCheckCard(fa: Boolean) {
                     )
                 }
             }
+            localThreat?.let { indicator ->
+                Text(
+                    tr(fa, "تطبیق در بانک تهدید امضاشده: ", "Signed threat-feed match: ") + indicator.classification.name,
+                    color = if (indicator.classification == com.antivirusalai.intel.ThreatClassification.MALWARE) ColorDanger else ColorWarning,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    indicator.familyId + " · " + indicator.sources.sorted().joinToString(", ") +
+                        " · " + tr(fa, "اطمینان منبع", "source confidence") + " " + indicator.confidence + "%",
+                    color = TextSecondary,
+                    fontSize = 10.sp
+                )
+            } ?: Text(
+                localFeedMessage ?: tr(
+                    fa,
+                    "تطبیق محلی پیدا نشد یا فید معتبر فعلی موجود نیست؛ نتیجه به‌معنی پاک بودن لینک نیست.",
+                    "No local match or no current verified feed; this does not mean the URL is safe."
+                ),
+                color = ColorWarning,
+                fontSize = 10.sp
+            )
             cloudAssessment?.let { result ->
                 val cloudTint = when (result.reputationClassification?.uppercase()) {
                     "MALWARE", "PHISHING" -> ColorDanger
