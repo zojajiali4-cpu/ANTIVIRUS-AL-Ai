@@ -2319,6 +2319,10 @@ private fun ScanCenterScreen(
             )
         }
 
+        result?.let {
+            CloudHashReputationCard(result = it, fa = fa)
+        }
+
         if (result == null && batchReport == null && errorMessage == null) {
             InfoBanner(
                 title = tr(fa, "پیش از شروع", "Before you start"),
