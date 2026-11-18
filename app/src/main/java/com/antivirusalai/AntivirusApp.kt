@@ -55,6 +55,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -93,6 +94,7 @@ import com.antivirusalai.intel.ThreatFeedRefreshResult
 import com.antivirusalai.intel.ThreatFeedRuntime
 import com.antivirusalai.intel.ThreatNetworkIndicator
 import com.antivirusalai.remediation.QuarantineManager
+import com.antivirusalai.remediation.QuarantineEntry
 import com.antivirusalai.security.UrlRiskAnalyzer
 import com.antivirusalai.security.UrlRiskAssessment
 import com.antivirusalai.security.UrlRiskLevel
@@ -1919,6 +1921,185 @@ private fun UrlRiskCheckCard(fa: Boolean) {
 }
 
 @Composable
+private fun QuarantineManagementCard(fa: Boolean) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var entries by remember { mutableStateOf<List<QuarantineEntry>>(emptyList()) }
+    var refreshKey by remember { mutableStateOf(0) }
+    var busy by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+    var pendingRestore by remember { mutableStateOf<QuarantineEntry?>(null) }
+    var pendingDelete by remember { mutableStateOf<QuarantineEntry?>(null) }
+
+    LaunchedEffect(refreshKey) {
+        entries = withContext(Dispatchers.IO) {
+            QuarantineManager.list(context.applicationContext)
+        }
+    }
+
+    val restorePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/octet-stream")
+    ) { destination: Uri? ->
+        val entry = pendingRestore
+        pendingRestore = null
+        if (destination != null && entry != null && !busy) {
+            busy = true
+            scope.launch {
+                message = try {
+                    withContext(Dispatchers.IO) {
+                        QuarantineManager.restoreTo(context.applicationContext, entry.id, destination)
+                    }
+                    tr(fa, "بازیابی با بررسی صحت فایل انجام شد.", "Restore completed and integrity verified.")
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    tr(fa, "بازیابی انجام نشد: ", "Restore failed: ") + (error.message ?: "Error")
+                } finally {
+                    busy = false
+                    refreshKey++
+                }
+            }
+        }
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = SurfaceBase)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(11.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(tr(fa, "مدیریت قرنطینه", "QUARANTINE MANAGER"), color = BrandTeal, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Text(tr(fa, "نسخه‌های رمزنگاری‌شده", "Encrypted copies"), color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                }
+                StatusBadge(
+                    text = entries.size.toString() + " " + tr(fa, "مورد", "items"),
+                    tint = BrandTeal
+                )
+            }
+            Text(
+                tr(
+                    fa,
+                    "بازیابی فقط پس از بررسی برچسب AES-GCM و هش SHA-256 انجام می‌شود. حذف، فقط نسخه خصوصی قرنطینه را پاک می‌کند؛ فایل اصلی دست‌نخورده می‌ماند.",
+                    "Restore occurs only after AES-GCM authentication and SHA-256 verification. Delete removes only the private encrypted copy; the original remains untouched."
+                ),
+                color = TextSecondary,
+                fontSize = 10.sp,
+                lineHeight = 15.sp
+            )
+
+            if (entries.isEmpty()) {
+                Text(
+                    tr(fa, "هنوز نسخهٔ قابل مدیریت در قرنطینه ثبت نشده است.", "No managed quarantine copies are registered yet."),
+                    color = TextTertiary,
+                    fontSize = 11.sp
+                )
+            } else {
+                entries.take(20).forEach { entry ->
+                    Surface(color = SurfaceRaised, shape = RoundedCornerShape(13.dp)) {
+                        Column(Modifier.fillMaxWidth().padding(11.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                            Text(
+                                "ID " + entry.id.take(8) + " · " + formatBytes(entry.sizeBytes),
+                                color = TextPrimary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                "SHA-256  " + entry.sha256.take(20) + "…",
+                                color = TextTertiary,
+                                fontSize = 9.sp
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(
+                                    onClick = {
+                                        pendingRestore = entry
+                                        restorePicker.launch("ALAI-restored-" + entry.id.take(8) + ".bin")
+                                    },
+                                    enabled = !busy,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text(tr(fa, "بازیابی", "Restore"), fontSize = 11.sp)
+                                }
+                                OutlinedButton(
+                                    onClick = { pendingDelete = entry },
+                                    enabled = !busy,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text(tr(fa, "حذف نسخه", "Delete copy"), fontSize = 11.sp, color = ColorDanger)
+                                }
+                            }
+                        }
+                    }
+                }
+                if (entries.size > 20) {
+                    Text(
+                        tr(fa, "۲۰ مورد اول نمایش داده می‌شود؛ سایر موارد هم در فضای خصوصی باقی می‌مانند.", "Showing the first 20 items; the rest remain in private storage."),
+                        color = TextTertiary,
+                        fontSize = 9.sp
+                    )
+                }
+            }
+
+            message?.let {
+                Text(it, color = if (it.contains("failed", true) || it.contains("نشد")) ColorWarning else BrandTeal, fontSize = 10.sp)
+            }
+        }
+    }
+
+    pendingDelete?.let { entry ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text(tr(fa, "حذف نسخه قرنطینه؟", "Delete quarantine copy?")) },
+            text = {
+                Text(
+                    tr(
+                        fa,
+                        "فقط فایل رمزنگاری‌شده و رسید آن حذف می‌شود. فایل اصلی تغییر نمی‌کند. حافظه فلش حذف غیرقابل‌بازیابی فیزیکی را تضمین نمی‌کند.",
+                        "Only the encrypted copy and its receipt will be removed. The original is untouched. Flash storage cannot guarantee physical unrecoverability."
+                    )
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        pendingDelete = null
+                        scope.launch {
+                            busy = true
+                            message = try {
+                                val removed = withContext(Dispatchers.IO) {
+                                    QuarantineManager.deleteCopy(context.applicationContext, entry.id)
+                                }
+                                if (removed) tr(fa, "نسخه رمزنگاری‌شده حذف شد.", "Encrypted copy removed.")
+                                else tr(fa, "نسخه پیدا نشد یا حذف نشد.", "Copy was not found or could not be removed.")
+                            } catch (error: Exception) {
+                                tr(fa, "حذف انجام نشد: ", "Delete failed: ") + (error.message ?: "Error")
+                            } finally {
+                                busy = false
+                                refreshKey++
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = ColorDanger)
+                ) { Text(tr(fa, "حذف نسخه", "Delete copy")) }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { pendingDelete = null }) {
+                    Text(tr(fa, "انصراف", "Cancel"))
+                }
+            }
+        )
+    }
+}
+
+@Composable
 private fun SecurityToolsScreen(
     fa: Boolean,
     result: ScanResult?,
@@ -1933,6 +2114,7 @@ private fun SecurityToolsScreen(
         }
 
         UrlRiskCheckCard(fa = fa)
+        QuarantineManagementCard(fa = fa)
 
         ToolModuleCard(
             icon = "lock",
@@ -2647,7 +2829,7 @@ private fun featureTitle(fa: Boolean, feature: String): String = when (feature) 
 }
 
 private fun featureDescription(fa: Boolean, feature: String): String = when (feature) {
-    "quarantine" -> tr(fa, "با درخواست کاربر یک نسخه AES-GCM رمزنگاری‌شده در فضای خصوصی ذخیره و هش آن بررسی می‌شود. فایل اصلی حذف نمی‌شود. مدیریت، بازیابی و حذف امن نسخه‌های قرنطینه در مرحله بعد تکمیل می‌شود.", "At the user's request, an AES-GCM encrypted copy is stored in private app storage and its hash is verified. The original is not removed. Quarantine listing, restore and secure deletion are planned next.")
+    "quarantine" -> tr(fa, "نسخه‌های قرنطینه‌شده با AES-GCM رمزنگاری و صحت آن‌ها با SHA-256 بررسی می‌شود. می‌توان نسخه را به مسیر دلخواه بازیابی کرد یا فقط همان نسخه رمزنگاری‌شده را حذف کرد؛ فایل اصلی هرگز خودکار حذف نمی‌شود.", "Quarantine copies use AES-GCM and SHA-256 verification. You can restore a copy to a chosen destination or remove only the encrypted copy; the original is never deleted automatically.")
     "vulnerability" -> tr(fa, "این ماژول هنوز نتیجه آسیب‌پذیری واقعی تولید نمی‌کند. مرحله بعدی شامل شناسایی SDKها و کتابخانه‌ها و تطبیق آن‌ها با منابع CVE معتبر است.", "This module does not yet produce vulnerability findings. Next steps include SDK and library inventory mapped to trusted CVE sources.")
     "phishing" -> tr(fa, "تحلیل ساختاری URL روی دستگاه انجام می‌شود. استعلام اعتبار ابری فقط با ارسال دستی نشانی از سوی کاربر انجام می‌شود؛ نبود رکورد به معنی پاک بودن نیست.", "URL structure is checked on-device. Cloud reputation is queried only after a user submits the address; a missing record does not mean safe.")
     "network" -> tr(fa, "محافظ شبکه هنوز فعال نیست. پیاده‌سازی آن به طراحی شفاف DNS/VPN محلی و بررسی سیاست‌های Android و Google Play نیاز دارد.", "Network protection is not active. Implementation requires transparent local DNS/VPN design and Android/Google Play policy review.")
