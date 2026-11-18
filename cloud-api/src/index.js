@@ -19,14 +19,50 @@ function inspectUrl(value) {
  return {level,signals:sig,normalizedUrl:u.origin+u.pathname+u.search};
 }
 async function limited(req,env){
- if(!env.DB)return true;
- const ip=req.headers.get("CF-Connecting-IP")||"unknown";
- const b=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(ip+(env.RATE_SALT||env.ADMIN_API_KEY||"")));
- const key=[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,"0")).join(""), bucket=Math.floor(Date.now()/60000);
- await env.DB.prepare("INSERT INTO api_rate_limits(ip_hash,bucket,hits) VALUES(?,?,1) ON CONFLICT(ip_hash,bucket) DO UPDATE SET hits=hits+1").bind(key,bucket).run();
- const row=await env.DB.prepare("SELECT hits FROM api_rate_limits WHERE ip_hash=? AND bucket=?").bind(key,bucket).first();
- if(bucket%10===0) await env.DB.prepare("DELETE FROM api_rate_limits WHERE bucket < ?").bind(bucket-120).run();
- return (row?.hits||0)<=60;
+ if(!env.DB) throw new Error("DATABASE_UNAVAILABLE");
+ const salt = typeof env.RATE_SALT === "string" ? env.RATE_SALT : "";
+ const saltBytes = new TextEncoder().encode(salt);
+ if(saltBytes.byteLength < 32) throw new Error("RATE_LIMIT_KEY_NOT_CONFIGURED");
+
+ const ip = req.headers.get("CF-Connecting-IP");
+ if(!ip || ip.length > 128) throw new Error("CLIENT_ADDRESS_UNAVAILABLE");
+
+ // HMAC is keyed: the stored identifier cannot be precomputed from the small
+ // public IP-address space without knowing RATE_SALT.
+ const keyObject = await crypto.subtle.importKey(
+   "raw",
+   saltBytes,
+   { name: "HMAC", hash: "SHA-256" },
+   false,
+   ["sign"]
+ );
+ const signature = await crypto.subtle.sign(
+   "HMAC",
+   keyObject,
+   new TextEncoder().encode(ip)
+ );
+ const key = [...new Uint8Array(signature)]
+   .map(x => x.toString(16).padStart(2, "0"))
+   .join("");
+ const bucket = Math.floor(Date.now() / 60000);
+
+ try {
+   await env.DB.prepare(
+     "INSERT INTO api_rate_limits(ip_hash,bucket,hits) VALUES(?,?,1) ON CONFLICT(ip_hash,bucket) DO UPDATE SET hits=hits+1"
+   ).bind(key,bucket).run();
+   const row = await env.DB.prepare(
+     "SELECT hits FROM api_rate_limits WHERE ip_hash=? AND bucket=?"
+   ).bind(key,bucket).first();
+   if(bucket%10===0) {
+     await env.DB.prepare(
+       "DELETE FROM api_rate_limits WHERE bucket < ?"
+     ).bind(bucket-120).run();
+   }
+   return (row?.hits||0)<=60;
+ } catch {
+   // If D1 cannot enforce the limit, refuse the protected API request.
+   throw new Error("RATE_LIMIT_STORAGE_UNAVAILABLE");
+ }
 }
 async function body(req,max=65536){const n=Number(req.headers.get("content-length")||0);if(n>max)throw Error("BODY_TOO_LARGE");const t=await req.text();if(t.length>max)throw Error("BODY_TOO_LARGE");return JSON.parse(t);}
 export default { async fetch(req,env){
@@ -34,7 +70,18 @@ export default { async fetch(req,env){
  if(req.method==="OPTIONS"){const origin=req.headers.get("Origin")||"";const allowed=(env.CORS_ALLOWED_ORIGINS||"").split(",").map(x=>x.trim()).filter(Boolean);const headers={...H,"access-control-allow-methods":"GET,POST,OPTIONS","access-control-allow-headers":"content-type,authorization","vary":"Origin"};if(origin&&allowed.includes(origin))headers["access-control-allow-origin"]=origin;return new Response(null,{status:204,headers});}
  if(p==="/v1/health"&&req.method==="GET")return out({ok:true,service:"ANTIVIRUS AL AI API",version:"1.0.0",database:!!env.DB});
  if(!p.startsWith("/v1/"))return out({error:"NOT_FOUND"},404);
- if(!await limited(req,env))return out({error:"RATE_LIMITED",retryAfterSeconds:60},429);
+ try {
+   if(!await limited(req,env))return out({error:"RATE_LIMITED",retryAfterSeconds:60},429);
+ } catch (error) {
+   const code = error?.message === "DATABASE_UNAVAILABLE"
+     ? "DATABASE_UNAVAILABLE"
+     : error?.message === "RATE_LIMIT_KEY_NOT_CONFIGURED"
+       ? "RATE_LIMIT_KEY_NOT_CONFIGURED"
+       : error?.message === "CLIENT_ADDRESS_UNAVAILABLE"
+         ? "CLIENT_ADDRESS_UNAVAILABLE"
+         : "RATE_LIMIT_STORAGE_UNAVAILABLE";
+   return out({error:code},503);
+ }
  if(p==="/v1/url/check"&&req.method==="POST"){try{const x=await body(req),a=inspectUrl(x.url);if(a.level==="INVALID")return out({ok:false,assessment:a},400);if(env.DB){const host=new URL(x.url).hostname.toLowerCase();a.reputation=await env.DB.prepare("SELECT classification,source,updated_at FROM url_reputation WHERE host=?").bind(host).first()||null;}return out({ok:true,assessment:a,scope:"STRUCTURAL_ANALYSIS_AND_CURATED_REPUTATION",disclaimer:"No URL was opened or fetched. Structural checks are not proof of safety or maliciousness."});}catch(e){return out({error:e.message==="BODY_TOO_LARGE"?"BODY_TOO_LARGE":"INVALID_JSON"},400);}}
  if(p==="/v1/hash/reputation"&&req.method==="POST"){try{const x=await body(req),h=typeof x.sha256==="string"?x.sha256.toLowerCase():"";if(!HASH.test(h))return out({error:"INVALID_SHA256"},400);if(!env.DB)return out({ok:true,found:false,classification:"UNKNOWN"});const r=await env.DB.prepare("SELECT classification,family_id,source,updated_at FROM hash_reputation WHERE sha256=?").bind(h).first();return out({ok:true,found:!!r,classification:r?.classification||"UNKNOWN",indicator:r||null});}catch{return out({error:"INVALID_REQUEST"},400);}}
  if(p==="/v1/threat-feed/latest"&&req.method==="GET"){if(!env.DB)return out({error:"DATABASE_UNAVAILABLE"},503);const r=await env.DB.prepare("SELECT version,expires_at,payload FROM signed_feeds ORDER BY version DESC LIMIT 1").first();if(!r)return out({error:"FEED_NOT_PUBLISHED"},404);if(r.expires_at<=Math.floor(Date.now()/1000))return out({error:"FEED_EXPIRED"},410);return new Response(r.payload,{headers:{"content-type":"text/plain; charset=utf-8","cache-control":"public, max-age=300","x-feed-version":String(r.version)}});}
