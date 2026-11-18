@@ -920,8 +920,8 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
                 Text(
                     tr(
                         fa,
-                        "اسکن خودکار فقط پس از شروع توسط کاربر انجام می‌شود. فایل‌های قابل‌دسترسی حافظه اشتراکی و فهرست برنامه‌های نصب‌شده برای بررسی امنیتی روی خود دستگاه پردازش می‌شوند؛ محتوای فایل‌ها یا فهرست برنامه‌ها به سرور ارسال یا برای تبلیغات استفاده نمی‌شوند. Android همچنان پوشه‌های خصوصی برنامه‌های دیگر و Android/data و Android/obb را مسدود می‌کند. قرنطینه پس از تأیید کاربر نسخه رمزنگاری‌شده را بررسی می‌کند و فقط در صورت اجازه Android برای حذف منبع تلاش می‌کند.",
-                        "Scanning starts only when the user requests it. Accessible shared-storage files and the installed-app inventory are processed locally for security review; file contents and the app inventory are not sent to a server or used for advertising. Android still blocks other apps' private folders and protected areas such as Android/data and Android/obb. Quarantine verifies an encrypted copy first and attempts source deletion only after user confirmation and when Android permits it."
+                        "اسکن دستگاه فقط پس از شروع توسط کاربر انجام می‌شود. فهرست برنامه‌های نصب‌شده فقط پس از رضایت جداگانه و قابل‌لغو از تنظیمات برنامه بررسی می‌شود؛ نام بسته‌ها و مسیر APKهای قابل‌خواندن فقط روی دستگاه پردازش می‌شوند و به سرور یا سامانه تبلیغاتی ارسال نمی‌شوند. اسکن گسترده حافظه مشترک به مجوز جداگانه «مدیریت همه فایل‌ها» در Android نیاز دارد. Android همچنان پوشه‌های خصوصی برنامه‌های دیگر و Android/data و Android/obb را مسدود می‌کند. استعلام آنلاین هش نیز فقط پس از تأیید جداگانه، اثرانگشت SHA-256 را می‌فرستد؛ محتوای فایل، نام و مسیر آن ارسال نمی‌شوند. قرنطینه ابتدا نسخه رمزنگاری‌شده را راستی‌آزمایی می‌کند و حذف فایل مبدأ عملی جداگانه و نیازمند تأیید کاربر است.",
+                        "Device scans start only when requested by the user. Installed-app inventory is inspected only after separate, revocable consent in app settings; package names and readable APK paths are processed locally and are not sent to a server or advertising system. Broad shared-storage scanning requires the separate Android All files access setting. Android still blocks other apps' private folders and Android/data and Android/obb. Optional online hash reputation sends only the SHA-256 digest after separate confirmation; file contents, name and path are not sent. Quarantine verifies the encrypted copy first, and source deletion is a separate user-confirmed action."
                     ),
                     color = TextSecondary
                 )
@@ -3234,6 +3234,8 @@ private fun PlanCard(
 @Composable
 private fun SettingsScreen(
     fa: Boolean,
+    appInventoryConsent: Boolean,
+    onManageAppInventoryConsent: () -> Unit,
     onLanguageChange: () -> Unit,
     onPrivacy: () -> Unit,
     onAbout: () -> Unit,
@@ -3257,6 +3259,17 @@ private fun SettingsScreen(
             title = tr(fa, "حریم خصوصی و داده‌ها", "Privacy and data"),
             description = tr(fa, "نحوه استفاده از فایل‌ها و داده‌ها", "How files and data are handled"),
             onClick = onPrivacy
+        )
+        SettingsRow(
+            icon = "shield",
+            title = tr(fa, "بررسی فهرست برنامه‌های نصب‌شده", "Installed-app inventory inspection"),
+            description = if (appInventoryConsent) {
+                tr(fa, "رضایت داده شده؛ بررسی محلی فعال است", "Consent granted; local inspection enabled")
+            } else {
+                tr(fa, "رضایت داده نشده؛ فهرست برنامه‌ها بررسی نمی‌شود", "No consent; installed-app inventory is not inspected")
+            },
+            action = if (appInventoryConsent) tr(fa, "لغو", "Revoke") else tr(fa, "اجازه", "Allow"),
+            onClick = onManageAppInventoryConsent
         )
         SettingsRow(
             icon = "info",
