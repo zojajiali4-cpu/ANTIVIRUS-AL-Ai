@@ -9,12 +9,12 @@ on:
 permissions:
   contents: read
 
-# Do not cancel an active validation run just because a newer commit was pushed.
-# Isolate each source revision so a stuck emulator run for an older commit
-# cannot keep the newest revision queued behind the same PR concurrency group.
+# Only the latest revision of each PR/branch should consume Android runners.
+# Superseded commits are cancelled so their emulator/build jobs cannot compete
+# with the current candidate or leave stale results looking like current validation.
 concurrency:
-  group: android-ci-${{ github.workflow }}-${{ github.sha }}
-  cancel-in-progress: false
+  group: android-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-apk:
