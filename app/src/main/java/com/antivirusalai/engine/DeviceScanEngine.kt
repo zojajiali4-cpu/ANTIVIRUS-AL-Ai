@@ -447,8 +447,18 @@ object DeviceScanEngine {
         }
 
         var skippedComponents = 0
-        apps.forEach { app ->
-            if (output.size >= maxFiles) return@forEach
+        for (app in apps) {
+            // Consent may be revoked while a large package inventory is being
+            // enumerated. Stop before reading the next package's metadata.
+            if (!com.antivirusalai.InstalledAppInventoryConsent.isGranted(context)) {
+                failures += FolderScanFailure(
+                    "Installed app inventory",
+                    "Installed-app inspection was stopped because the user revoked consent during the scan."
+                )
+                skippedComponents++
+                break
+            }
+            if (output.size >= maxFiles) break
 
             // Keep null base paths visible as an unverified component rather than
             // dropping them with listOfNotNull(). Each split must be accounted for.
