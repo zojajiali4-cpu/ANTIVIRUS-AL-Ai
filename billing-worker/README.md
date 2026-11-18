@@ -23,7 +23,7 @@ Required Worker variables:
 - `PORTAL_URL`: public HTTPS URL of the portal.
 - `PRICE_PLUS_MONTHLY_IRR`, `PRICE_PLUS_ANNUAL_IRR`, `PRICE_PRO_FAMILY_IRR`, `PRICE_LIFETIME_IRR`: positive integer amounts in rial.
 - `PRICE_PLUS_MONTHLY_USD`, `PRICE_PLUS_ANNUAL_USD`, `PRICE_PRO_FAMILY_USD`, `PRICE_LIFETIME_USD`: positive integer amounts in US cents.
-- Secrets: `ZARINPAL_MERCHANT_ID`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`.
+- Secrets: `RATE_SALT` (at least 32 high-entropy bytes), `ZARINPAL_MERCHANT_ID`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`.
 
 Set Stripe webhook endpoint to `https://YOUR_API_HOST/api/webhooks/stripe`, subscribe to `checkout.session.completed`, and store its signing secret as `STRIPE_WEBHOOK_SECRET`.
 
@@ -31,23 +31,27 @@ Set Stripe webhook endpoint to `https://YOUR_API_HOST/api/webhooks/stripe`, subs
 - `GET /api/health`
 - `GET /api/plans`
 - `POST /api/checkout` JSON: `{ "email":"buyer@example.com", "plan":"PLUS_MONTHLY", "provider":"zarinpal|stripe", "locale":"fa|en" }`
-- `GET /api/order-status?order=UUID&email=buyer@example.com`
+- `POST /api/order-status` JSON: `{ "order":"UUID", "email":"buyer@example.com" }` (email stays in the request body, not the URL).
 
-The browser only receives the provider's hosted checkout URL. Activation is never based on a browser redirect alone. The Stripe webhook validates its signature, order/session association, amount and currency. Zarinpal callbacks call the provider's verify endpoint before activation.
+The browser only receives the provider's hosted checkout URL. Activation is never based on a browser redirect alone. The Stripe webhook validates its signature, order/session association, amount and currency. Zarinpal callbacks call the provider's verify endpoint before activation. Verified provider references are persisted, provider references are unique per gateway, and a database uniqueness constraint plus idempotent activation prevents duplicate subscriptions for the same order.
 
 ## Deployment checklist
 1. Provision the dedicated D1 and Worker; keep them isolated from Planet.
 2. Apply the schema and configure the D1 binding.
-3. Configure non-secret variables and secrets in Cloudflare.
+3. Configure non-secret variables and secrets in Cloudflare. The checkout and order-status endpoints fail closed until `RATE_SALT` and the D1 rate-limit table are configured.
 4. Deploy the Worker and static portal on HTTPS.
 5. Register Stripe webhook and verify both providers in sandbox/test mode first.
 6. Set real plan prices and verify refunds, duplicate callbacks, expiry, and order reconciliation.
 7. Only then connect the Android Store screen to the portal.
 8. Complete privacy policy, terms, refund policy, tax and consumer-law review for each target market.
 
+## Abuse controls
+
+Checkout is limited to 10 requests per IP-derived HMAC bucket per minute; order-status checks are limited to 30 per minute. The Worker uses a dedicated `RATE_SALT` secret and D1 table. The API returns HTTP 503 when the database, secret, client IP or rate-limit storage is unavailable; it does not fall back to unthrottled checkout. Rotate the secret deliberately because rotation creates new rate-limit identifiers.
+
 ## Known next hardening work
 - Add an authenticated customer account/session layer before exposing subscription management.
 - Add admin reconciliation and refund endpoints with role-based access.
 - Add idempotent transaction ledger and subscription extension logic for renewals.
 - Send receipts only after verified payment, through a configured transactional email provider.
-- Add automated Worker tests and CI validation before production release.
+- Worker unit tests and dependency-free CI cover checkout configuration, plan lookup, HMAC rate limits, order-status privacy, request-size bounds, Stripe webhook signatures, and duplicate/concurrent payment activation. Production deployment, provider sandbox verification, refund/reconciliation tests and external security review remain release gates.

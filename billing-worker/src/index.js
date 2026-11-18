@@ -27,10 +27,80 @@ function addInterval(interval) {
   else return null;
   return d.toISOString();
 }
+async function readTextBounded(request, maxBytes) {
+  const declaredLength = Number(request.headers.get("content-length") || 0);
+  if (declaredLength > maxBytes) throw new Error("Request too large");
+  if (!request.body) throw new Error("Invalid JSON");
+
+  const reader = request.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel();
+        throw new Error("Request too large");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+}
+
 async function readJson(request) {
-  const length = Number(request.headers.get("content-length") || 0);
-  if (length > 12000) throw new Error("Request too large");
-  return await request.json();
+  const raw = await readTextBounded(request, 12_000);
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new Error("Invalid JSON");
+  }
+}
+
+async function enforceBillingRateLimit(request, env, scope, limit) {
+  if (!env.DB) throw new Error("DATABASE_UNAVAILABLE");
+  const salt = typeof env.RATE_SALT === "string" ? env.RATE_SALT : "";
+  const saltBytes = new TextEncoder().encode(salt);
+  if (saltBytes.byteLength < 32) throw new Error("RATE_LIMIT_KEY_NOT_CONFIGURED");
+
+  const ip = request.headers.get("CF-Connecting-IP");
+  if (!ip || ip.length > 128) throw new Error("CLIENT_ADDRESS_UNAVAILABLE");
+  const keyObject = await crypto.subtle.importKey(
+    "raw",
+    saltBytes,
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const signature = await crypto.subtle.sign("HMAC", keyObject, new TextEncoder().encode(ip));
+  const ipHash = [...new Uint8Array(signature)].map(value => value.toString(16).padStart(2, "0")).join("");
+  const bucket = Math.floor(Date.now() / 60_000);
+
+  try {
+    await env.DB.prepare(
+      "INSERT INTO billing_rate_limits(ip_hash,bucket,scope,hits) VALUES(?,?,?,1) ON CONFLICT(ip_hash,bucket,scope) DO UPDATE SET hits=hits+1"
+    ).bind(ipHash, bucket, scope).run();
+    const row = await env.DB.prepare(
+      "SELECT hits FROM billing_rate_limits WHERE ip_hash=? AND bucket=? AND scope=?"
+    ).bind(ipHash, bucket, scope).first();
+    if (bucket % 10 === 0) {
+      await env.DB.prepare("DELETE FROM billing_rate_limits WHERE bucket < ?").bind(bucket - 120).run();
+    }
+    return (row?.hits || 0) <= limit;
+  } catch {
+    throw new Error("RATE_LIMIT_STORAGE_UNAVAILABLE");
+  }
 }
 async function getPlan(env, code) {
   if (!PLAN_CODES.has(code)) return null;
@@ -45,10 +115,18 @@ async function getPlan(env, code) {
   return { ...row, prices: map[code] };
 }
 async function createOrder(request, env) {
-  const body = await readJson(request);
+  let body;
+  try {
+    body = await readJson(request);
+  } catch (error) {
+    return json({ error: error.message === "Request too large" ? "Request too large." : "Invalid request body." }, 400);
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ error: "A JSON object is required." }, 400);
+  }
   const email = String(body.email || "").trim().toLowerCase();
   const locale = body.locale === "en" ? "en" : "fa";
-  const plan = await getPlan(body.plan, env);
+  const plan = await getPlan(env, body.plan);
   const provider = body.provider === "stripe" ? "stripe" : body.provider === "zarinpal" ? "zarinpal" : "";
   const currency = provider === "stripe" ? "USD" : "IRR";
   const amount = Number(plan?.prices?.[currency]);
@@ -112,21 +190,36 @@ async function createOrder(request, env) {
     return json({ error: "Could not start checkout. Please try again later." }, 502);
   }
 }
-async function activateOrder(env, orderId, providerReference) {
+export async function activateOrder(env, orderId, providerReference) {
+  const reference = String(providerReference || "").trim();
+  if (!reference || reference.length > 256) return false;
+
   const order = await env.DB.prepare("SELECT * FROM orders WHERE id=?").bind(orderId).first();
-  if (!order || order.status !== "pending" || order.expires_at < nowIso()) return false;
+  if (!order) return false;
+
+  if (order.status === "paid") {
+    return order.provider_reference === reference;
+  }
   const paidAt = nowIso();
+  if (order.status !== "pending" || order.expires_at < paidAt) return false;
+
   const subscriptionId = crypto.randomUUID();
   const endsAt = order.plan_code === "LIFETIME_OFFLINE" ? null : addInterval(order.plan_code === "PLUS_MONTHLY" ? "month" : "year");
-  // D1 batch is transactional. The insert is conditional on this exact transition,
-  // so concurrent/duplicate provider callbacks cannot create duplicate subscriptions.
+
+  // D1 batch is transactional. The order transition, provider reference and
+  // subscription insert are one transaction. The unique order_id constraint
+  // makes duplicate callbacks idempotent even when they arrive in the same ms.
   await env.DB.batch([
-    env.DB.prepare("UPDATE orders SET status='paid',paid_at=? WHERE id=? AND status='pending' AND expires_at>=?")
-      .bind(paidAt, orderId, paidAt),
-    env.DB.prepare("INSERT INTO subscriptions(id,customer_id,plan_code,order_id,status,starts_at,ends_at) SELECT ?,?,?,?,'active',?,? WHERE EXISTS (SELECT 1 FROM orders WHERE id=? AND status='paid' AND paid_at=?)")
-      .bind(subscriptionId, order.customer_id, order.plan_code, order.id, paidAt, endsAt, orderId, paidAt)
+    env.DB.prepare("UPDATE orders SET status='paid',paid_at=?,provider_reference=? WHERE id=? AND status='pending' AND expires_at>=?")
+      .bind(paidAt, reference, orderId, paidAt),
+    env.DB.prepare("INSERT OR IGNORE INTO subscriptions(id,customer_id,plan_code,order_id,status,starts_at,ends_at) SELECT ?,?,?,?,'active',?,? WHERE EXISTS (SELECT 1 FROM orders WHERE id=? AND status='paid' AND paid_at=? AND provider_reference=?)")
+      .bind(subscriptionId, order.customer_id, order.plan_code, order.id, paidAt, endsAt, orderId, paidAt, reference)
   ]);
-  return true;
+
+  // A concurrent callback may have won the transition. Treat it as idempotent
+  // only when the exact same provider transaction reference was already saved.
+  const finalOrder = await env.DB.prepare("SELECT status,provider_reference FROM orders WHERE id=?").bind(orderId).first();
+  return finalOrder?.status === "paid" && finalOrder.provider_reference === reference;
 }
 async function zarinpalCallback(request, env, url) {
   const orderId = url.searchParams.get("order") || "";
@@ -140,23 +233,63 @@ async function zarinpalCallback(request, env, url) {
   });
   const result = await response.json();
   if (!response.ok || ![100, 101].includes(result.data?.code)) return Response.redirect((env.PORTAL_URL || url.origin) + "?payment=failed", 303);
-  await activateOrder(env, orderId, result.data.ref_id);
-  return Response.redirect((env.PORTAL_URL || url.origin) + "?payment=success&order=" + encodeURIComponent(orderId), 303);
+  const providerReference = String(result.data?.ref_id ?? "").trim();
+  if (!/^[0-9]{1,32}$/.test(providerReference)) {
+    return Response.redirect((env.PORTAL_URL || url.origin) + "?payment=processing&order=" + encodeURIComponent(orderId), 303);
+  }
+  const activated = await activateOrder(env, orderId, providerReference);
+  const paymentState = activated ? "success" : "processing";
+  return Response.redirect((env.PORTAL_URL || url.origin) + "?payment=" + paymentState + "&order=" + encodeURIComponent(orderId), 303);
 }
+function constantTimeHexEqual(left, right) {
+  if (typeof left !== "string" || typeof right !== "string" || left.length !== right.length) return false;
+  let difference = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
+  }
+  return difference === 0;
+}
+
 async function verifyStripeSignature(raw, header, secret) {
-  const parts = Object.fromEntries(header.split(",").map(p => p.split("=").map(v => v.trim())));
-  if (!parts.t || !parts.v1 || Math.abs(Date.now() / 1000 - Number(parts.t)) > 300) return false;
-  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const signed = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(parts.t + "." + raw));
-  const hex = [...new Uint8Array(signed)].map(b => b.toString(16).padStart(2, "0")).join("");
-  return hex.length === parts.v1.length && [...hex].every((c, i) => c === parts.v1[i]);
+  let timestamp = "";
+  const signatures = [];
+  for (const part of header.split(",")) {
+    const separator = part.indexOf("=");
+    if (separator <= 0) continue;
+    const name = part.slice(0, separator).trim();
+    const value = part.slice(separator + 1).trim();
+    if (name === "t") timestamp = value;
+    if (name === "v1" && /^[0-9a-f]{64}$/i.test(value)) signatures.push(value.toLowerCase());
+  }
+  if (!/^[0-9]{1,12}$/.test(timestamp) || signatures.length === 0 ||
+      Math.abs(Date.now() / 1000 - Number(timestamp)) > 300) return false;
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const signed = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(timestamp + "." + raw));
+  const expected = [...new Uint8Array(signed)].map(value => value.toString(16).padStart(2, "0")).join("");
+  return signatures.some(signature => constantTimeHexEqual(expected, signature));
 }
 async function stripeWebhook(request, env) {
-  const raw = await request.text();
+  let raw;
+  try {
+    raw = await readTextBounded(request, 128 * 1024);
+  } catch {
+    return json({ error: "Invalid webhook body" }, 400);
+  }
   if (!env.STRIPE_WEBHOOK_SECRET || !await verifyStripeSignature(raw, request.headers.get("Stripe-Signature") || "", env.STRIPE_WEBHOOK_SECRET)) {
     return json({ error: "Invalid signature" }, 400);
   }
-  const event = JSON.parse(raw);
+  let event;
+  try {
+    event = JSON.parse(raw);
+  } catch {
+    return json({ error: "Invalid webhook event JSON" }, 400);
+  }
   if (event.type === "checkout.session.completed" && event.data?.object?.payment_status === "paid") {
     const session = event.data.object;
     const orderId = session.metadata?.order_id || session.client_reference_id;
@@ -167,10 +300,21 @@ async function stripeWebhook(request, env) {
   }
   return json({ received: true });
 }
-async function orderStatus(url, env) {
-  const orderId = url.searchParams.get("order") || "";
-  const email = (url.searchParams.get("email") || "").trim().toLowerCase();
-  if (!orderId || !validEmail(email)) return json({ error: "Order and email are required." }, 400);
+async function orderStatus(request, env) {
+  let body;
+  try {
+    body = await readJson(request);
+  } catch (error) {
+    return json({ error: error.message === "Request too large" ? "Request too large." : "Invalid request body." }, 400);
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ error: "A JSON object is required." }, 400);
+  }
+  const orderId = String(body.order || "").trim();
+  const email = String(body.email || "").trim().toLowerCase();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(orderId) || !validEmail(email)) {
+    return json({ error: "Order and email are required." }, 400);
+  }
   const row = await env.DB.prepare("SELECT o.id,o.plan_code,o.status,o.currency,o.amount,o.created_at,o.paid_at,c.email FROM orders o JOIN customers c ON c.id=o.customer_id WHERE o.id=? AND c.email=?")
     .bind(orderId, email).first();
   if (!row) return json({ error: "Order not found." }, 404);
@@ -190,12 +334,25 @@ export default {
       ] }, 200, headers);
     }
     if (url.pathname === "/api/checkout" && request.method === "POST") {
-      if (headers["Access-Control-Allow-Origin"] === undefined && request.headers.get("Origin")) return json({ error: "Origin not allowed." }, 403);
+      if (headers["Access-Control-Allow-Origin"] === undefined && request.headers.get("Origin")) return json({ error: "Origin not allowed." }, 403, headers);
+      try {
+        if (!await enforceBillingRateLimit(request, env, "checkout", 10)) return json({ error: "Too many checkout attempts. Try again shortly." }, 429, headers);
+      } catch {
+        return json({ error: "Checkout service is temporarily unavailable." }, 503, headers);
+      }
       const response = await createOrder(request, env);
       const payload = await response.json();
       return json(payload, response.status, headers);
     }
-    if (url.pathname === "/api/order-status" && request.method === "GET") return orderStatus(url, env).then(r => new Response(r.body, { status: r.status, headers: { ...Object.fromEntries(r.headers), ...headers } }));
+    if (url.pathname === "/api/order-status" && request.method === "POST") {
+      if (headers["Access-Control-Allow-Origin"] === undefined && request.headers.get("Origin")) return json({ error: "Origin not allowed." }, 403, headers);
+      try {
+        if (!await enforceBillingRateLimit(request, env, "order-status", 30)) return json({ error: "Too many order-status requests. Try again shortly." }, 429, headers);
+      } catch {
+        return json({ error: "Order-status service is temporarily unavailable." }, 503, headers);
+      }
+      return orderStatus(request, env).then(r => new Response(r.body, { status: r.status, headers: { ...Object.fromEntries(r.headers), ...headers } }));
+    }
     if (url.pathname === "/api/payments/zarinpal/callback" && request.method === "GET") return zarinpalCallback(request, env, url);
     if (url.pathname === "/api/payments/stripe/callback" && request.method === "GET") return Response.redirect((env.PORTAL_URL || url.origin) + "?payment=processing", 303);
     if (url.pathname === "/api/webhooks/stripe" && request.method === "POST") return stripeWebhook(request, env);

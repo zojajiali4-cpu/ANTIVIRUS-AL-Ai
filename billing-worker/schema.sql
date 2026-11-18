@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS orders (
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','paid','failed','expired','refunded')),
   authority TEXT,
   provider_session_id TEXT,
+  provider_reference TEXT,
   checkout_url TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   paid_at TEXT,
@@ -32,6 +33,7 @@ CREATE TABLE IF NOT EXISTS orders (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_authority ON orders(provider, authority) WHERE authority IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_session ON orders(provider, provider_session_id) WHERE provider_session_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_provider_reference ON orders(provider, provider_reference) WHERE provider_reference IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_orders_customer_created ON orders(customer_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS subscriptions (
@@ -46,6 +48,18 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_subscriptions_customer ON subscriptions(customer_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_order ON subscriptions(order_id);
+
+-- HMAC-derived short-lived identifiers for checkout and order-status rate limits.
+-- The HMAC key is a Cloudflare Worker secret named RATE_SALT, never stored in D1.
+CREATE TABLE IF NOT EXISTS billing_rate_limits (
+  ip_hash TEXT NOT NULL,
+  bucket INTEGER NOT NULL,
+  scope TEXT NOT NULL,
+  hits INTEGER NOT NULL,
+  PRIMARY KEY (ip_hash, bucket, scope)
+);
+CREATE INDEX IF NOT EXISTS idx_billing_rate_limits_bucket ON billing_rate_limits(bucket);
 
 INSERT OR IGNORE INTO plans(code,name,interval,active) VALUES
  ('PLUS_MONTHLY','PLUS Monthly','month',1),

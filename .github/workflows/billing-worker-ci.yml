@@ -1,0 +1,36 @@
+name: Billing Worker CI
+
+on:
+  push:
+    paths:
+      - "billing-worker/**"
+      - "billing-portal/**"
+      - ".github/workflows/billing-worker-ci.yml"
+  pull_request:
+    paths:
+      - "billing-worker/**"
+      - ".github/workflows/billing-worker-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: billing-worker-ci-${{ github.workflow }}-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  billing-tests:
+    name: Billing API security tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run dependency-free Worker tests
+        working-directory: billing-worker
+        run: npm test
