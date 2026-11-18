@@ -68,6 +68,9 @@ class ProtectionService : Service() {
 
     private val packageReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
+            // Re-check consent before even reading the package identifier from
+            // a system install event; consent may have been revoked while active.
+            if (!InstalledAppInventoryConsent.isGranted(this@ProtectionService)) return
             val packageName = intent?.data?.schemeSpecificPart ?: return
             if (packageName == packageNameForSelf()) return
             serviceScope.launch {
