@@ -52,6 +52,12 @@ object ThreatFeedRuntime {
     fun lookup(context: Context, sha256: String): ThreatIndicator? =
         store(context)?.lookup(sha256)
 
+    /** Exact-match lookup in the currently verified signed network-indicator set. */
+    fun lookupNetworkIndicator(context: Context, url: String): ThreatNetworkIndicator? =
+        store(context)?.loadCurrent()?.networkIndicators?.let {
+            ThreatFeedNetworkMatcher.find(url, it)
+        }
+
     /** Downloads only the signed feed bytes; it never uploads files or hashes. */
     suspend fun refresh(context: Context): ThreatFeedRefreshResult {
         val endpoint = BuildConfig.ALAI_THREAT_FEED_URL.trim()
