@@ -58,17 +58,6 @@ CREATE TABLE IF NOT EXISTS billing_rate_limits (
 );
 CREATE INDEX IF NOT EXISTS idx_billing_rate_limits_bucket ON billing_rate_limits(bucket);
 
--- Keyed HMAC identifiers are stored for short-lived per-IP abuse controls.
--- RATE_SALT is a separate Worker secret; never store it in D1 or source control.
-CREATE TABLE IF NOT EXISTS billing_rate_limits (
-  ip_hash TEXT NOT NULL,
-  bucket INTEGER NOT NULL,
-  scope TEXT NOT NULL,
-  hits INTEGER NOT NULL,
-  PRIMARY KEY (ip_hash, bucket, scope)
-);
-CREATE INDEX IF NOT EXISTS idx_billing_rate_limits_bucket ON billing_rate_limits(bucket);
-
 INSERT OR IGNORE INTO plans(code,name,interval,active) VALUES
  ('PLUS_MONTHLY','PLUS Monthly','month',1),
  ('PLUS_ANNUAL','PLUS Annual','year',1),
