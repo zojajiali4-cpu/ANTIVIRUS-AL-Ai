@@ -264,7 +264,12 @@ async function stripeWebhook(request, env) {
   if (!env.STRIPE_WEBHOOK_SECRET || !await verifyStripeSignature(raw, request.headers.get("Stripe-Signature") || "", env.STRIPE_WEBHOOK_SECRET)) {
     return json({ error: "Invalid signature" }, 400);
   }
-  const event = JSON.parse(raw);
+  let event;
+  try {
+    event = JSON.parse(raw);
+  } catch {
+    return json({ error: "Invalid webhook event JSON" }, 400);
+  }
   if (event.type === "checkout.session.completed" && event.data?.object?.payment_status === "paid") {
     const session = event.data.object;
     const orderId = session.metadata?.order_id || session.client_reference_id;
