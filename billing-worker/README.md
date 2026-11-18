@@ -54,4 +54,4 @@ Checkout is limited to 10 requests per IP-derived HMAC bucket per minute; order-
 - Add admin reconciliation and refund endpoints with role-based access.
 - Add idempotent transaction ledger and subscription extension logic for renewals.
 - Send receipts only after verified payment, through a configured transactional email provider.
-- Add automated Worker tests and CI validation before production release.
+- Worker unit tests and dependency-free CI now cover checkout configuration, plan lookup, HMAC rate limits, order-status privacy, request-size bounds, and Stripe webhook signatures. Production deployment, provider sandbox verification, refund/reconciliation tests and external security review remain release gates.
