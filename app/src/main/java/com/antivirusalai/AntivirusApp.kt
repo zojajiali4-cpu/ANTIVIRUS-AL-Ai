@@ -1,6 +1,20 @@
 package com.antivirusalai
 
 import android.net.Uri
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.imageResource
+import androidx.compose.ui.res.painterResource
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
@@ -767,34 +781,38 @@ private fun HeroSecurityCard(
                     IconArt("spark", tint = BrandTeal, size = 21.dp)
                 }
 
-                Row(
+                GuardianRobotArtwork(
+                    fa = fa,
+                    scanning = scanning,
                     modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    height = 158.dp,
+                    robotSize = 142.dp
+                )
+
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(7.dp)
                 ) {
-                    ShieldEmblem(size = 83.dp)
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(7.dp)
-                    ) {
-                        Text(
-                            tr(fa, "امنیت را آگاهانه بررسی کن", "Take control of your security"),
-                            color = TextPrimary,
-                            fontSize = 20.sp,
-                            lineHeight = 27.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            tr(
-                                fa,
-                                "فایل یا APK را انتخاب کن؛ تحلیل در همین دستگاه انجام می‌شود.",
-                                "Choose a file or APK. Analysis runs locally on this device."
-                            ),
-                            color = Color(0xFFC1D4E5),
-                            fontSize = 12.sp,
-                            lineHeight = 18.sp
-                        )
-                    }
+                    Text(
+                        tr(fa, "امنیت را آگاهانه بررسی کن", "Take control of your security"),
+                        color = TextPrimary,
+                        fontSize = 20.sp,
+                        lineHeight = 27.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center
+                    )
+                    Text(
+                        tr(
+                            fa,
+                            "فایل یا APK را انتخاب کن؛ تحلیل در همین دستگاه انجام می‌شود.",
+                            "Choose a file or APK. Analysis runs locally on this device."
+                        ),
+                        color = Color(0xFFC1D4E5),
+                        fontSize = 12.sp,
+                        lineHeight = 18.sp,
+                        textAlign = TextAlign.Center
+                    )
                 }
 
                 Button(
@@ -831,6 +849,148 @@ private fun HeroSecurityCard(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun GuardianRobotArtwork(
+    fa: Boolean,
+    scanning: Boolean,
+    modifier: Modifier = Modifier,
+    height: Dp = 154.dp,
+    robotSize: Dp = 138.dp
+) {
+    val sweepTransition = rememberInfiniteTransition(label = "guardian-scan-sweep")
+    val sweepPosition by sweepTransition.animateFloat(
+        initialValue = if (scanning) -0.08f else 0.5f,
+        targetValue = if (scanning) 1.08f else 0.5f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1750, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "guardian-scan-position"
+    )
+    val artworkShape = RoundedCornerShape(22.dp)
+
+    Box(
+        modifier = modifier
+            .height(height)
+            .background(
+                Brush.verticalGradient(
+                    listOf(Color(0xFF18334B), Color(0xFF17283F), Color(0xFF101D30))
+                ),
+                artworkShape
+            )
+            .border(1.dp, BrandTeal.copy(alpha = 0.22f), artworkShape),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(Modifier.fillMaxSize()) {
+            val center = Offset(size.width * 0.5f, size.height * 0.53f)
+            val radius = size.height * 0.72f
+            drawCircle(
+                brush = Brush.radialGradient(
+                    listOf(
+                        Color(0xFF8C6CFF).copy(alpha = 0.28f),
+                        BrandTeal.copy(alpha = 0.10f),
+                        Color.Transparent
+                    ),
+                    center = center,
+                    radius = radius
+                ),
+                radius = radius,
+                center = center
+            )
+            listOf(0.78f, 0.62f, 0.47f).forEachIndexed { index, factor ->
+                drawCircle(
+                    color = BrandTeal.copy(alpha = 0.14f - index * 0.025f),
+                    radius = size.height * factor,
+                    center = center,
+                    style = Stroke(width = if (index == 0) 1.2.dp.toPx() else 0.8.dp.toPx())
+                )
+            }
+            drawCircle(
+                color = Color.White.copy(alpha = 0.10f),
+                radius = size.height * 0.31f,
+                center = center,
+                style = Stroke(width = 0.8.dp.toPx())
+            )
+        }
+
+        Image(
+            painter = painterResource(id = R.drawable.guardian_robot),
+            contentDescription = tr(fa, "ربات نگهبان هوشمند AL AI", "AL AI security guardian robot"),
+            modifier = Modifier
+                .align(Alignment.Center)
+                .size(robotSize),
+            contentScale = ContentScale.Fit
+        )
+
+        if (scanning) {
+            Canvas(Modifier.fillMaxSize()) {
+                val beamY = size.height * sweepPosition
+                val beamHalfHeight = 13.dp.toPx()
+                drawRect(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(
+                            Color.Transparent,
+                            BrandTeal.copy(alpha = 0.08f),
+                            Color(0xFFE2FFFF).copy(alpha = 0.62f),
+                            BrandTeal.copy(alpha = 0.18f),
+                            Color.Transparent
+                        ),
+                        startY = beamY - beamHalfHeight,
+                        endY = beamY + beamHalfHeight
+                    ),
+                    topLeft = Offset(0f, beamY - beamHalfHeight),
+                    size = Size(size.width, beamHalfHeight * 2f)
+                )
+                drawLine(
+                    color = Color(0xFFDFFFFF).copy(alpha = 0.88f),
+                    start = Offset(9.dp.toPx(), beamY),
+                    end = Offset(size.width - 9.dp.toPx(), beamY),
+                    strokeWidth = 1.25.dp.toPx(),
+                    cap = StrokeCap.Round
+                )
+            }
+        }
+
+        Row(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(9.dp)
+                .background(Color(0xFF07111E).copy(alpha = 0.76f), CircleShape)
+                .padding(horizontal = 8.dp, vertical = 5.dp),
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            AssetArt(index = 8, size = 17.dp)
+            Text(
+                tr(fa, if (scanning) "در حال اسکن" else "نگهبان هوشمند", if (scanning) "LIVE SCAN" else "AI GUARDIAN"),
+                color = BrandTeal,
+                fontSize = 8.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+@Composable
+private fun AssetArt(index: Int, size: Dp) {
+    val atlas = ImageBitmap.imageResource(R.drawable.security_artwork_sheet)
+    Canvas(Modifier.size(size)) {
+        val cell = 32
+        val safeIndex = index.coerceIn(0, 15)
+        drawImage(
+            image = atlas,
+            srcOffset = IntOffset((safeIndex % 4) * cell, (safeIndex / 4) * cell),
+            srcSize = IntSize(cell, cell),
+            dstSize = IntSize(
+                this.size.width.toInt().coerceAtLeast(1),
+                this.size.height.toInt().coerceAtLeast(1)
+            ),
+            filterQuality = FilterQuality.High
+        )
     }
 }
 
@@ -1097,6 +1257,14 @@ private fun ScanCenterScreen(
                 fontSize = 12.sp
             )
         }
+
+        GuardianRobotArtwork(
+            fa = fa,
+            scanning = scanning,
+            modifier = Modifier.fillMaxWidth(),
+            height = 146.dp,
+            robotSize = 128.dp
+        )
 
         ScanModeCard(
             icon = "file",
