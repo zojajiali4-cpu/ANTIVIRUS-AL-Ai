@@ -2667,6 +2667,100 @@ private fun ScanResultCard(
             }
 
             DetailPanel(title = "SHA-256", value = result.sha256)
+
+            if (result.mlModelState != com.antivirusalai.engine.MlModelState.NOT_APPLICABLE) {
+                val modelReady = result.mlModelState == com.antivirusalai.engine.MlModelState.READY
+                val modelError = result.mlModelState == com.antivirusalai.engine.MlModelState.ERROR
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = when {
+                            modelReady -> BrandTeal.copy(alpha = 0.09f)
+                            modelError -> ColorWarning.copy(alpha = 0.09f)
+                            else -> SurfaceRaised
+                        }
+                    ),
+                    shape = RoundedCornerShape(15.dp)
+                ) {
+                    Column(
+                        Modifier.padding(13.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            tr(fa, "وضعیت مدل هوش مصنوعی روی دستگاه", "On-device AI model status"),
+                            color = TextPrimary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
+                        )
+                        when (result.mlModelState) {
+                            com.antivirusalai.engine.MlModelState.READY -> {
+                                Text(
+                                    tr(
+                                        fa,
+                                        "مدل ارزیابی‌شده فعال است • امتیاز ریسک: ${result.mlRiskScore ?: "—"}/100",
+                                        "Validated model active • Risk score: ${result.mlRiskScore ?: "—"}/100"
+                                    ),
+                                    color = BrandTeal,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 11.sp
+                                )
+                                result.mlModelVersion?.let {
+                                    Text(
+                                        tr(fa, "نسخه مدل: $it", "Model version: $it"),
+                                        color = TextSecondary,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                                Text(
+                                    tr(
+                                        fa,
+                                        "امتیاز مدل یک شاخص کمکی برای بازبینی است و به‌تنهایی اثبات بدافزار نیست.",
+                                        "The model score is a review aid and is not proof of malware."
+                                    ),
+                                    color = TextSecondary,
+                                    fontSize = 10.sp,
+                                    lineHeight = 15.sp
+                                )
+                            }
+                            com.antivirusalai.engine.MlModelState.NOT_CONFIGURED -> {
+                                Text(
+                                    tr(
+                                        fa,
+                                        "مدل آموزش‌دیده و ارزیابی‌شده نصب نشده است.",
+                                        "No trained and evaluated model is installed."
+                                    ),
+                                    color = ColorWarning,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 11.sp
+                                )
+                                Text(
+                                    tr(
+                                        fa,
+                                        "استخراج ویژگی‌ها انجام می‌شود، اما یادگیری ماشین در رأی این اسکن دخالت ندارد.",
+                                        "Feature extraction is available, but machine learning does not contribute to this scan verdict."
+                                    ),
+                                    color = TextSecondary,
+                                    fontSize = 10.sp,
+                                    lineHeight = 15.sp
+                                )
+                            }
+                            com.antivirusalai.engine.MlModelState.ERROR -> {
+                                Text(
+                                    tr(
+                                        fa,
+                                        "مدل هوش مصنوعی قابل‌اعتماد نبود و اجرا نشد.",
+                                        "The AI model failed validation and was not used."
+                                    ),
+                                    color = ColorWarning,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 11.sp
+                                )
+                            }
+                            com.antivirusalai.engine.MlModelState.NOT_APPLICABLE -> Unit
+                        }
+                    }
+                }
+            }
+
             result.apkMetadata?.let { apk ->
                 Card(colors = CardDefaults.cardColors(containerColor = SurfaceRaised), shape = RoundedCornerShape(15.dp)) {
                     Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
