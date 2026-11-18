@@ -190,21 +190,36 @@ async function createOrder(request, env) {
     return json({ error: "Could not start checkout. Please try again later." }, 502);
   }
 }
-async function activateOrder(env, orderId, providerReference) {
+export async function activateOrder(env, orderId, providerReference) {
+  const reference = String(providerReference || "").trim();
+  if (!reference || reference.length > 256) return false;
+
   const order = await env.DB.prepare("SELECT * FROM orders WHERE id=?").bind(orderId).first();
-  if (!order || order.status !== "pending" || order.expires_at < nowIso()) return false;
+  if (!order) return false;
+
+  if (order.status === "paid") {
+    return order.provider_reference === reference;
+  }
   const paidAt = nowIso();
+  if (order.status !== "pending" || order.expires_at < paidAt) return false;
+
   const subscriptionId = crypto.randomUUID();
   const endsAt = order.plan_code === "LIFETIME_OFFLINE" ? null : addInterval(order.plan_code === "PLUS_MONTHLY" ? "month" : "year");
-  // D1 batch is transactional. The insert is conditional on this exact transition,
-  // so concurrent/duplicate provider callbacks cannot create duplicate subscriptions.
+
+  // D1 batch is transactional. The order transition, provider reference and
+  // subscription insert are one transaction. The unique order_id constraint
+  // makes duplicate callbacks idempotent even when they arrive in the same ms.
   await env.DB.batch([
-    env.DB.prepare("UPDATE orders SET status='paid',paid_at=? WHERE id=? AND status='pending' AND expires_at>=?")
-      .bind(paidAt, orderId, paidAt),
-    env.DB.prepare("INSERT INTO subscriptions(id,customer_id,plan_code,order_id,status,starts_at,ends_at) SELECT ?,?,?,?,'active',?,? WHERE EXISTS (SELECT 1 FROM orders WHERE id=? AND status='paid' AND paid_at=?)")
-      .bind(subscriptionId, order.customer_id, order.plan_code, order.id, paidAt, endsAt, orderId, paidAt)
+    env.DB.prepare("UPDATE orders SET status='paid',paid_at=?,provider_reference=? WHERE id=? AND status='pending' AND expires_at>=?")
+      .bind(paidAt, reference, orderId, paidAt),
+    env.DB.prepare("INSERT OR IGNORE INTO subscriptions(id,customer_id,plan_code,order_id,status,starts_at,ends_at) SELECT ?,?,?,?,'active',?,? WHERE EXISTS (SELECT 1 FROM orders WHERE id=? AND status='paid' AND paid_at=? AND provider_reference=?)")
+      .bind(subscriptionId, order.customer_id, order.plan_code, order.id, paidAt, endsAt, orderId, paidAt, reference)
   ]);
-  return true;
+
+  // A concurrent callback may have won the transition. Treat it as idempotent
+  // only when the exact same provider transaction reference was already saved.
+  const finalOrder = await env.DB.prepare("SELECT status,provider_reference FROM orders WHERE id=?").bind(orderId).first();
+  return finalOrder?.status === "paid" && finalOrder.provider_reference === reference;
 }
 async function zarinpalCallback(request, env, url) {
   const orderId = url.searchParams.get("order") || "";
