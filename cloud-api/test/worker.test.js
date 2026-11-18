@@ -218,3 +218,60 @@ test("request bodies are bounded before JSON parsing", async () => {
   assert.equal(response.status, 400);
   assert.equal((await json(response)).error, "BODY_TOO_LARGE");
 });
+
+
+test("an absent hash reputation record remains UNKNOWN, never clean", async () => {
+  const response = await worker.fetch(request("/v1/hash/reputation", { sha256: "f".repeat(64) }), { DB: makeD1(), RATE_SALT });
+  assert.equal(response.status, 200);
+  const result = await json(response);
+  assert.equal(result.found, false);
+  assert.equal(result.classification, "UNKNOWN");
+  assert.match(result.disclaimer, /not proof of safety/i);
+});
+
+test("URL analysis is structural only and does not fetch the submitted URL", async () => {
+  const response = await worker.fetch(request("/v1/url/check", { url: "https://example.com/account" }), { DB: makeD1(), RATE_SALT });
+  assert.equal(response.status, 200);
+  const result = await json(response);
+  assert.equal(result.scope, "STRUCTURAL_ANALYSIS_AND_CURATED_REPUTATION");
+  assert.equal(result.assessment.level, "CAUTION");
+  assert.ok(result.assessment.signals.includes("SENSITIVE_KEYWORD"));
+  assert.match(result.disclaimer, /No URL was opened or fetched/i);
+});
+
+test("URL analysis flags literal-IP HTTP URLs as high-risk structure", async () => {
+  const response = await worker.fetch(request("/v1/url/check", { url: "http://192.0.2.10/login" }), { DB: makeD1(), RATE_SALT });
+  assert.equal(response.status, 200);
+  const result = await json(response);
+  assert.equal(result.assessment.level, "HIGH_RISK_STRUCTURE");
+  assert.ok(result.assessment.signals.includes("IP_LITERAL_HOST"));
+  assert.ok(result.assessment.signals.includes("UNENCRYPTED_HTTP"));
+});
+
+test("URL analysis rejects unsupported schemes without attempting a fetch", async () => {
+  const response = await worker.fetch(request("/v1/url/check", { url: "javascript:alert(1)" }), { DB: makeD1(), RATE_SALT });
+  assert.equal(response.status, 400);
+  const result = await json(response);
+  assert.equal(result.assessment.level, "INVALID");
+  assert.ok(result.assessment.signals.includes("UNSUPPORTED_SCHEME"));
+});
+
+test("hash reputation rejects malformed digests", async () => {
+  const response = await worker.fetch(request("/v1/hash/reputation", { sha256: "not-a-hash" }), { DB: makeD1(), RATE_SALT });
+  assert.equal(response.status, 400);
+  assert.equal((await json(response)).error, "INVALID_SHA256");
+});
+
+test("CORS preflight reflects only an explicitly allowed origin", async () => {
+  const allowed = await worker.fetch(new Request("https://api.example.test/v1/hash/reputation", {
+    method: "OPTIONS", headers: { Origin: "https://app.example.test" }
+  }), { CORS_ALLOWED_ORIGINS: "https://app.example.test" });
+  assert.equal(allowed.status, 204);
+  assert.equal(allowed.headers.get("access-control-allow-origin"), "https://app.example.test");
+
+  const denied = await worker.fetch(new Request("https://api.example.test/v1/hash/reputation", {
+    method: "OPTIONS", headers: { Origin: "https://evil.example" }
+  }), { CORS_ALLOWED_ORIGINS: "https://app.example.test" });
+  assert.equal(denied.status, 204);
+  assert.equal(denied.headers.get("access-control-allow-origin"), null);
+});
