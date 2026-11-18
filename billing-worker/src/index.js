@@ -233,8 +233,13 @@ async function zarinpalCallback(request, env, url) {
   });
   const result = await response.json();
   if (!response.ok || ![100, 101].includes(result.data?.code)) return Response.redirect((env.PORTAL_URL || url.origin) + "?payment=failed", 303);
-  await activateOrder(env, orderId, result.data.ref_id);
-  return Response.redirect((env.PORTAL_URL || url.origin) + "?payment=success&order=" + encodeURIComponent(orderId), 303);
+  const providerReference = String(result.data?.ref_id ?? "").trim();
+  if (!/^[0-9]{1,32}$/.test(providerReference)) {
+    return Response.redirect((env.PORTAL_URL || url.origin) + "?payment=processing&order=" + encodeURIComponent(orderId), 303);
+  }
+  const activated = await activateOrder(env, orderId, providerReference);
+  const paymentState = activated ? "success" : "processing";
+  return Response.redirect((env.PORTAL_URL || url.origin) + "?payment=" + paymentState + "&order=" + encodeURIComponent(orderId), 303);
 }
 function constantTimeHexEqual(left, right) {
   if (typeof left !== "string" || typeof right !== "string" || left.length !== right.length) return false;
