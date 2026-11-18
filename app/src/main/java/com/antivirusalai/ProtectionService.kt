@@ -99,8 +99,9 @@ class ProtectionService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        // Re-run setup when the activity asks the existing service to start again,
-        // e.g. after the user returns from Android's All files access settings.
+        // Re-evaluate revocable app-inventory consent and storage access whenever
+        // the activity asks the existing service to refresh its coverage.
+        registerPackageMonitor()
         startFileMonitoring()
         return START_STICKY
     }
@@ -175,9 +176,14 @@ class ProtectionService : Service() {
         // Package inventory is a sensitive signal: registering package-change
         // monitoring is gated by the same explicit, revocable in-app consent.
         if (!InstalledAppInventoryConsent.isGranted(this)) {
-            packageReceiverRegistered = false
+            if (packageReceiverRegistered) {
+                runCatching { unregisterReceiver(packageReceiver) }
+                packageReceiverRegistered = false
+            }
             return
         }
+        if (packageReceiverRegistered) return
+
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_PACKAGE_ADDED)
             addAction(Intent.ACTION_PACKAGE_REPLACED)
