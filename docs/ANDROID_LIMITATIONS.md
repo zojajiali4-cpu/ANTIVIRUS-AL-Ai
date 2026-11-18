@@ -6,11 +6,12 @@ The manifest requests `MANAGE_EXTERNAL_STORAGE` for broad shared-storage scannin
 
 ## What the current app can inspect
 
-- Readable shared-storage files Android exposes after the user grants the relevant access, within explicit scan limits: quick scan 350 files/1 GiB; deep scan 10,000 files/5 GiB; 200 MiB per file.
+- Readable shared-storage files Android exposes after the user grants the relevant access, within explicit scan limits: quick device scan 350 files/1 GiB; deep device scan and user-selected folder scan 100,000 files/25 GiB; 200 MiB per file. Directory traversal is additionally bounded by depth and directory-visit limits. Reaching any cap or encountering skipped/unreadable items must be reported as incomplete coverage, never as a complete clean scan.
 - APK archives that are readable from shared storage or exposed through package metadata.
 - Package metadata exposed by Android's PackageManager: declared permissions, components, target SDK, and signing-certificate information where available.
 - SHA-256 hashes calculated locally, then checked against the currently installed authenticated feed.
 - A harmless EICAR test string used only for scanner regression checks.
+- Offline URL-structure heuristics through the Security Tools screen. The URL is parsed locally; the app does not resolve DNS, follow redirects, open the page or fetch online reputation.
 
 ## What it cannot claim
 
@@ -29,4 +30,8 @@ This does not silently uninstall applications. An ordinary app cannot remove sys
 
 ## Network and privacy
 
-The app downloads a public, publisher-signed hash feed over HTTPS. The scanning path does not send file contents or file hashes to the publisher. The publisher workflow queries hash/family metadata from its licensed source and signs the exact feed bytes outside the APK. Provider credentials and the ECDSA private signing key must be stored as GitHub Actions secrets, never in source code or client resources.
+The app downloads a public, publisher-signed hash feed over HTTPS. The local scanning path does not send file contents, filenames or paths to the publisher. A separate, optional cloud hash-reputation action is shown only after the user explicitly confirms it for a selected scan result; that request contains only the SHA-256 digest. The online result is displayed separately and never overwrites the local verdict. An absent record or unavailable service is UNKNOWN, not clean. The service may process ordinary connection metadata, such as the client IP, for rate limiting. The Cloud Worker code is present in this repository, but production deployment, D1 configuration, threat-data ingestion and live service health have not been verified.
+
+Offline URL inspection is local-only and does not contact a server. It is a structural heuristic, not a phishing verdict or live domain-reputation check. It does not follow URL shorteners or inspect page content.
+
+The publisher workflow queries hash/family metadata from its authorized source and signs the exact feed bytes outside the APK. Provider credentials and the ECDSA private signing key must be stored as GitHub Actions secrets, never in source code or client resources.
