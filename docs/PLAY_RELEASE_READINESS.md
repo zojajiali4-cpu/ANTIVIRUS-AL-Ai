@@ -1,6 +1,6 @@
 # Google Play release-readiness checklist
 
-Last reviewed: 2026-11-08
+Last reviewed: 2026-11-18
 
 This document tracks release gates for ANTIVIRUS AL AI. A successful debug APK build is not a Play-ready release.
 
@@ -17,7 +17,7 @@ This document tracks release gates for ANTIVIRUS AL AI. A successful debug APK b
 
 ### 1. Security and product validation
 
-- [ ] Complete Android unit tests, lint, APK assembly, and API 33/35/36 emulator smoke tests for the exact release commit.
+- [ ] Complete Android unit tests, lint, APK assembly, and API 33/35 emulator smoke tests for the exact release commit. API 36 remains advisory until the hosted emulator's Package Manager/ADB instability is resolved.
 - [ ] Validate threat-feed parsing, signatures, freshness, expiry, rollback, source provenance, and truncated-feed behavior.
 - [ ] Keep provider publishing disabled until each provider's commercial terms and required authorization are confirmed.
 - [ ] Complete independent malware-detection evaluation and application security review before making performance or detection-rate claims.
@@ -43,7 +43,14 @@ The current manifest requests `MANAGE_EXTERNAL_STORAGE` and `QUERY_ALL_PACKAGES`
 - [ ] Describe scan coverage and limitations honestly; do not claim full real-time protection or guaranteed malware removal.
 - [ ] Provide a support channel: `Zojajiali4@gmail.com`.
 
-### 4. Release artifact and account
+### 4. Store, cloud service and intelligence activation
+
+- [ ] Connect Google Play Billing and verify purchase, subscription acknowledgement, restore, cancellation and entitlement flows. The current Store screen is a plan preview only and does not collect payment or activate subscriptions.
+- [ ] Deploy and verify the Cloud Worker, D1 schema, rate limits, operational monitoring and privacy/retention disclosures before advertising cloud reputation as active.
+- [ ] Publish and install a reviewed, signed production threat feed and content-rule bundle. Built-in test indicators and the unconfigured ML scaffold are not a production detection dataset or model.
+- [ ] Keep offline URL-structure heuristics labelled as heuristic-only; do not market them as live phishing or domain-reputation protection.
+
+### 5. Release artifact and account
 
 - [ ] Complete the unsigned AAB preflight and inspect its package/version/permissions for the exact release commit.
 - [ ] Create a production-signed Android App Bundle (AAB), not a debug APK or unsigned preflight artifact.
