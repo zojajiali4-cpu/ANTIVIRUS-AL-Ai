@@ -80,6 +80,9 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.antivirusalai.engine.EvidenceSeverity
+import com.antivirusalai.engine.FolderScanEngine
+import com.antivirusalai.engine.FolderScanMode
+import com.antivirusalai.engine.FolderScanReport
 import com.antivirusalai.engine.ScanEngine
 import com.antivirusalai.engine.ScanResult
 import com.antivirusalai.engine.ScanTooLargeException
@@ -123,6 +126,11 @@ fun AntivirusApp() {
     var quarantining by remember { mutableStateOf(false) }
     var selectedUri by rememberSaveable { mutableStateOf<Uri?>(null) }
     var scanResult by remember { mutableStateOf<ScanResult?>(null) }
+    var folderReport by remember { mutableStateOf<FolderScanReport?>(null) }
+    var folderProgress by remember { mutableStateOf(0f) }
+    var folderCurrent by remember { mutableStateOf(0) }
+    var folderTotal by remember { mutableStateOf(0) }
+    var folderCurrentName by remember { mutableStateOf<String?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
     var selectedPlan by remember { mutableStateOf<String?>(null) }
