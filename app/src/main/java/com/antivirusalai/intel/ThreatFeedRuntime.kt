@@ -86,7 +86,7 @@ object ThreatFeedRuntime {
             }
             val declaredLength = connection.contentLengthLong
             if (declaredLength > SignedThreatFeedParser.MAX_FEED_BYTES) {
-                return ThreatFeedRefreshResult.Failed("Threat feed exceeds the 2 MiB safety limit.")
+                return ThreatFeedRefreshResult.Failed("Threat feed exceeds the 4 MiB safety limit.")
             }
             val bytes = connection.inputStream.use { input ->
                 val output = ByteArrayOutputStream()
@@ -102,7 +102,7 @@ object ThreatFeedRuntime {
                 output.toByteArray()
             }
             val installed = feedStore.install(bytes)
-            ThreatFeedRefreshResult.Updated(installed.version, installed.indicators.size)
+            ThreatFeedRefreshResult.Updated(installed.version, installed.indicators.size + installed.networkIndicators.size)
         } catch (error: FeedValidationException) {
             ThreatFeedRefreshResult.Failed("Threat feed rejected: ${error.code}.")
         } catch (_: Exception) {
