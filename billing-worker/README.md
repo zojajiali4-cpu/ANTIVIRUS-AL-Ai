@@ -33,7 +33,7 @@ Set Stripe webhook endpoint to `https://YOUR_API_HOST/api/webhooks/stripe`, subs
 - `POST /api/checkout` JSON: `{ "email":"buyer@example.com", "plan":"PLUS_MONTHLY", "provider":"zarinpal|stripe", "locale":"fa|en" }`
 - `POST /api/order-status` JSON: `{ "order":"UUID", "email":"buyer@example.com" }` (email stays in the request body, not the URL).
 
-The browser only receives the provider's hosted checkout URL. Activation is never based on a browser redirect alone. The Stripe webhook validates its signature, order/session association, amount and currency. Zarinpal callbacks call the provider's verify endpoint before activation.
+The browser only receives the provider's hosted checkout URL. Activation is never based on a browser redirect alone. The Stripe webhook validates its signature, order/session association, amount and currency. Zarinpal callbacks call the provider's verify endpoint before activation. Verified provider references are persisted, provider references are unique per gateway, and a database uniqueness constraint plus idempotent activation prevents duplicate subscriptions for the same order.
 
 ## Deployment checklist
 1. Provision the dedicated D1 and Worker; keep them isolated from Planet.
@@ -54,4 +54,4 @@ Checkout is limited to 10 requests per IP-derived HMAC bucket per minute; order-
 - Add admin reconciliation and refund endpoints with role-based access.
 - Add idempotent transaction ledger and subscription extension logic for renewals.
 - Send receipts only after verified payment, through a configured transactional email provider.
-- Worker unit tests and dependency-free CI now cover checkout configuration, plan lookup, HMAC rate limits, order-status privacy, request-size bounds, and Stripe webhook signatures. Production deployment, provider sandbox verification, refund/reconciliation tests and external security review remain release gates.
+- Worker unit tests and dependency-free CI cover checkout configuration, plan lookup, HMAC rate limits, order-status privacy, request-size bounds, Stripe webhook signatures, and duplicate/concurrent payment activation. Production deployment, provider sandbox verification, refund/reconciliation tests and external security review remain release gates.
