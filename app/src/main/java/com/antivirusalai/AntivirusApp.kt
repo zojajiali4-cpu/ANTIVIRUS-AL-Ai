@@ -177,6 +177,20 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
     var protectionEnabled by remember { mutableStateOf(ProtectionRuntime.isEnabled(context)) }
     val fa = language == "fa"
 
+    val refreshProtectionService: () -> Unit = {
+        if (protectionEnabled) {
+            runCatching {
+                context.startForegroundService(Intent(context, ProtectionService::class.java))
+            }.onFailure {
+                errorMessage = tr(
+                    fa,
+                    "وضعیت سرویس محافظت به‌روزرسانی نشد؛ برنامه را دوباره باز کن و وضعیت اعلان را بررسی کن.",
+                    "Protection service coverage could not be refreshed; reopen the app and check its notification."
+                )
+            }
+        }
+    }
+
     val performProtectionToggle: (Boolean) -> Unit = { enabled ->
         if (enabled) {
             try {
@@ -629,6 +643,7 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
                                     if (appInventoryConsent) {
                                         InstalledAppInventoryConsent.setGranted(context, false)
                                         appInventoryConsent = false
+                                        refreshProtectionService()
                                         notice = tr(
                                             fa,
                                             "رضایت بررسی فهرست برنامه‌ها لغو شد. اسکن‌های بعدی و پایش نصب برنامه‌ها از این فهرست استفاده نمی‌کنند.",
@@ -783,13 +798,19 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
                         appInventoryConsent = true
                         showAppInventoryDisclosure = false
                         when (pendingInventoryConsentAction) {
-                            AppInventoryConsentAction.DEVICE_SCAN -> requestDeviceScan(pendingDeepScan)
+                            AppInventoryConsentAction.DEVICE_SCAN -> {
+                                refreshProtectionService()
+                                requestDeviceScan(pendingDeepScan)
+                            }
                             AppInventoryConsentAction.PROTECTION -> performProtectionToggle(true)
-                            AppInventoryConsentAction.SETTINGS, null -> notice = tr(
-                                fa,
-                                "رضایت بررسی محلی فهرست برنامه‌ها ثبت شد.",
-                                "Consent for local installed-app inspection was saved."
-                            )
+                            AppInventoryConsentAction.SETTINGS, null -> {
+                                refreshProtectionService()
+                                notice = tr(
+                                    fa,
+                                    "رضایت بررسی محلی فهرست برنامه‌ها ثبت شد.",
+                                    "Consent for local installed-app inspection was saved."
+                                )
+                            }
                         }
                         pendingInventoryConsentAction = null
                     },
