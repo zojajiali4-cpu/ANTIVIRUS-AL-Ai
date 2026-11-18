@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - "billing-worker/**"
+      - "billing-portal/**"
       - ".github/workflows/billing-worker-ci.yml"
   pull_request:
     paths:
