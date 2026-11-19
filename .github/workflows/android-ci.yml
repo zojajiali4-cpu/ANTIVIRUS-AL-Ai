@@ -175,7 +175,32 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -wipe-data
           emulator-boot-timeout: 1200
-          script: gradle --no-daemon connectedDebugAndroidTest --stacktrace
+          script: |
+            set -euo pipefail
+            echo "Checking Android Package Manager readiness before instrumentation."
+            package_manager_ready=false
+            for attempt in $(seq 1 18); do
+              if timeout 8s adb shell cmd package list packages >/dev/null 2>&1; then
+                echo "Android Package Manager is responsive (attempt ${attempt}/18)."
+                package_manager_ready=true
+                break
+              fi
+              echo "Package Manager not ready yet (${attempt}/18); waiting 5 seconds."
+              sleep 5
+            done
+
+            if [ "${package_manager_ready}" != "true" ]; then
+              echo "::error::Emulator boot completed, but Android Package Manager did not become responsive."
+              adb devices -l || true
+              adb shell getprop sys.boot_completed || true
+              adb shell getprop init.svc.bootanim || true
+              adb logcat -d -b all -t 2000 2>&1 \
+                | grep -Ei 'system_server|PackageManager|FATAL EXCEPTION|lowmemory|lmkd|OutOfMemory|Watchdog|ANR' \
+                | tail -n 100 || true
+              exit 1
+            fi
+
+            gradle --no-daemon connectedDebugAndroidTest --stacktrace
 
   release-bundle-preflight:
     name: Build and inspect unsigned release AAB
