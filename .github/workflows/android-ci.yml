@@ -167,6 +167,9 @@ jobs:
 
       - name: Launch app and run instrumentation tests
         uses: reactivecircus/android-emulator-runner@v2
+        # The hosted runner has no KVM; explicitly allow the emulator's TCG fallback.
+        env:
+          ANDROID_I_WANT_MY_TCG: "yes"
         with:
           api-level: ${{ matrix.api-level }}
           target: google_apis
