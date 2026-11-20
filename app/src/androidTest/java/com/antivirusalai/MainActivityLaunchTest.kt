@@ -1,5 +1,6 @@
 package com.antivirusalai
 
+import android.content.Intent
 import android.graphics.BitmapFactory
 import android.view.ViewGroup
 import androidx.test.core.app.ActivityScenario
@@ -42,9 +43,18 @@ class MainActivityLaunchTest {
 
     @Test
     fun launcherActivityAttachesItsComposeContentAfterStartup() {
-        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
-            scenario.onActivity { activity ->
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val targetContext = instrumentation.targetContext
+        val launchIntent = requireNotNull(
+            targetContext.packageManager.getLaunchIntentForPackage(targetContext.packageName)
+        ) { "The app must expose a launcher activity." }.apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        }
+
+        val activity = instrumentation.startActivitySync(launchIntent) as MainActivity
+        try {
+            instrumentation.waitForIdleSync()
+            instrumentation.runOnMainSync {
                 assertNotNull("The launcher Activity must create a window.", activity.window)
                 val content = activity.findViewById<ViewGroup>(android.R.id.content)
                 assertNotNull("The Activity content host must exist.", content)
@@ -57,6 +67,11 @@ class MainActivityLaunchTest {
                     content.getChildAt(0).isAttachedToWindow
                 )
             }
+        } finally {
+            instrumentation.runOnMainSync {
+                activity.finishAndRemoveTask()
+            }
+            instrumentation.waitForIdleSync()
         }
     }
 }
