@@ -1,5 +1,6 @@
 package com.antivirusalai
 
+import android.content.Intent
 import android.graphics.BitmapFactory
 import android.view.ViewGroup
 import androidx.test.core.app.ActivityScenario
@@ -42,8 +43,19 @@ class MainActivityLaunchTest {
 
     @Test
     fun launcherActivityAttachesItsComposeContentAfterStartup() {
-        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+        val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
+        val launchIntent = requireNotNull(
+            targetContext.packageManager.getLaunchIntentForPackage(targetContext.packageName)
+        ) { "The app must expose a launcher activity." }.apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        }
+
+        // startActivitySync waits for the main looper to become idle. That is a
+        // stronger condition than Activity startup and can time out while the
+        // Compose UI is still scheduling work. ActivityScenario waits for the
+        // Activity lifecycle instead, then lets this test inspect the attached
+        // content on the main thread without treating queue idleness as success.
+        ActivityScenario.launch<MainActivity>(launchIntent).use { scenario ->
             scenario.onActivity { activity ->
                 assertNotNull("The launcher Activity must create a window.", activity.window)
                 val content = activity.findViewById<ViewGroup>(android.R.id.content)
