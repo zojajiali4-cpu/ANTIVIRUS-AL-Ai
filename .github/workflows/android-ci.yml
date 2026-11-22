@@ -166,20 +166,98 @@ jobs:
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools" "cmake;3.22.1" "ndk;30.0.16248370"
 
       - name: Launch app and run instrumentation tests
-        uses: reactivecircus/android-emulator-runner@v2
-        # The hosted runner has no KVM; explicitly allow the emulator's TCG fallback.
+        shell: bash
+        # Start the emulator directly so the workflow can wait for Android framework
+        # services, not only sys.boot_completed, before issuing input/PackageManager calls.
         env:
           ANDROID_I_WANT_MY_TCG: "yes"
-        with:
-          api-level: ${{ matrix.api-level }}
-          target: google_apis
-          arch: x86_64
-          profile: pixel_2
-          disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -wipe-data
-          emulator-boot-timeout: 1200
-          # Keep this as one command: android-emulator-runner invokes script lines separately.
-          script: bash -euo pipefail -c 'ready=false; for attempt in $(seq 1 18); do if timeout 8s adb shell cmd package list packages >/dev/null 2>&1; then echo "Android Package Manager is responsive (attempt ${attempt}/18)."; ready=true; break; fi; echo "Package Manager not ready yet (${attempt}/18); waiting 5 seconds."; sleep 5; done; if [ "$ready" != true ]; then echo "::error::Emulator boot completed, but Android Package Manager did not become responsive."; adb devices -l || true; adb shell getprop sys.boot_completed || true; adb shell getprop init.svc.bootanim || true; adb logcat -d -b all -t 2000 2>&1 | grep -Ei "system_server|PackageManager|FATAL EXCEPTION|lowmemory|lmkd|OutOfMemory|Watchdog|ANR" | tail -n 100 || true; exit 1; fi; gradle --no-daemon connectedDebugAndroidTest --stacktrace'
+          API_LEVEL: ${{ matrix.api-level }}
+        run: |
+          set -Eeuo pipefail
+          SDKMANAGER_DIR="$(dirname "$(command -v sdkmanager)")"
+          AVDMANAGER="$SDKMANAGER_DIR/avdmanager"
+          ADB="$ANDROID_HOME/platform-tools/adb"
+          EMULATOR="$ANDROID_HOME/emulator/emulator"
+          AVD_NAME="antivirus-api-$API_LEVEL"
+          EMULATOR_LOG="$RUNNER_TEMP/emulator-$API_LEVEL.log"
+
+          "$SDKMANAGER_DIR/sdkmanager" "emulator" "system-images;android-$API_LEVEL;google_apis;x86_64"
+          echo "no" | "$AVDMANAGER" create avd --force --name "$AVD_NAME" \
+            --package "system-images;android-$API_LEVEL;google_apis;x86_64" --device pixel_2
+
+          "$ADB" start-server
+          "$EMULATOR" -avd "$AVD_NAME" -port 5554 -no-window -gpu swiftshader_indirect \
+            -noaudio -no-boot-anim -no-snapshot -wipe-data -accel off >"$EMULATOR_LOG" 2>&1 &
+          EMULATOR_PID=$!
+
+          cleanup() {
+            local status=$?
+            trap - EXIT
+            if (( status != 0 )); then
+              echo "::group::Emulator diagnostics (API $API_LEVEL)"
+              "$ADB" -s emulator-5554 logcat -d -b all -t 2000 2>&1 \
+                | grep -Ei "system_server|PackageManager|InputManager|FATAL EXCEPTION|lowmemory|lmkd|OutOfMemory|Watchdog|ANR" \
+                | tail -n 120 || true
+              tail -n 120 "$EMULATOR_LOG" || true
+              echo "::endgroup::"
+            fi
+            "$ADB" -s emulator-5554 emu kill >/dev/null 2>&1 || true
+            wait "$EMULATOR_PID" 2>/dev/null || true
+            exit "$status"
+          }
+          trap cleanup EXIT
+
+          "$ADB" -s emulator-5554 wait-for-device
+          booted=false
+          for attempt in $(seq 1 240); do
+            if [[ "$("$ADB" -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)" == "1" ]]; then
+              booted=true
+              break
+            fi
+            sleep 5
+          done
+          if [[ "$booted" != true ]]; then
+            echo "::error::Emulator API $API_LEVEL did not complete boot within 20 minutes."
+            exit 1
+          fi
+
+          wait_for_service() {
+            local service="$1"
+            for attempt in $(seq 1 90); do
+              if "$ADB" -s emulator-5554 shell service check "$service" 2>&1 | grep -q "found"; then
+                echo "Android service '$service' is ready (attempt $attempt/90)."
+                return 0
+              fi
+              sleep 2
+            done
+            echo "::error::Android service '$service' did not become ready on API $API_LEVEL."
+            return 1
+          }
+
+          # sys.boot_completed can precede registration of framework services.
+          # Wait for both services before the unlock keyevent and APK installation.
+          wait_for_service input
+          wait_for_service package
+
+          package_ready=false
+          for attempt in $(seq 1 60); do
+            if timeout 10s "$ADB" -s emulator-5554 shell cmd package list packages >/dev/null 2>&1; then
+              package_ready=true
+              echo "Package Manager responds to package queries (attempt $attempt/60)."
+              break
+            fi
+            sleep 2
+          done
+          if [[ "$package_ready" != true ]]; then
+            echo "::error::Package Manager stayed unavailable on API $API_LEVEL."
+            exit 1
+          fi
+
+          "$ADB" -s emulator-5554 shell input keyevent 82
+          "$ADB" -s emulator-5554 shell settings put global window_animation_scale 0
+          "$ADB" -s emulator-5554 shell settings put global transition_animation_scale 0
+          "$ADB" -s emulator-5554 shell settings put global animator_duration_scale 0
+          gradle --no-daemon connectedDebugAndroidTest --stacktrace
 
   release-bundle-preflight:
     name: Build and inspect unsigned release AAB
