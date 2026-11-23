@@ -323,14 +323,14 @@ async function withPlayApi(purchase, callback, {
         status: 200, headers: { "content-type": "application/json" }
       });
     }
-    if (url.includes("/subscriptions/alai_plus")) {
-      return new Response(subscriptionStatus === 200 ? JSON.stringify(subscriptionConfig) : "{}",
-        { status: subscriptionStatus, headers: { "content-type": "application/json" } });
-    }
     if (url.includes(":acknowledge")) {
       return new Response(failAck ? JSON.stringify({ error: "ack failed" }) : "{}", {
         status: failAck ? 503 : 200, headers: { "content-type": "application/json" }
       });
+    }
+    if (url.includes("/applications/com.antivirusalai/subscriptions/alai_plus")) {
+      return new Response(subscriptionStatus === 200 ? JSON.stringify(subscriptionConfig) : "{}",
+        { status: subscriptionStatus, headers: { "content-type": "application/json" } });
     }
     if (url.includes("/purchases/subscriptionsv2/tokens/")) {
       return new Response(status === 200 ? JSON.stringify(purchase || {}) : "{}", {
@@ -532,51 +532,49 @@ test("billing readiness stays closed until the Google Play product and active ba
 
 test("billing readiness exposes only configured base plans that Google marks ACTIVE", async () => {
   await withPlayApi(null, async () => {
-    const response = await worker.fetch(request("/v1/billing/status"), playBillingEnvironment(), {
-      subscriptionConfig: {
-        packageName: "com.antivirusalai",
-        productId: "alai_plus",
-        basePlans: [
-          { basePlanId: "monthly", state: "ACTIVE" },
-          { basePlanId: "annual", state: "INACTIVE" },
-          { basePlanId: "legacy", state: "ACTIVE" }
-        ]
-      }
-    });
+    const response = await worker.fetch(request("/v1/billing/status"), playBillingEnvironment());
     assert.equal(response.status, 200);
     const result = await json(response);
     assert.equal(result.checkoutReady, true);
     assert.deepEqual(result.activeBasePlans, ["monthly"]);
+  }, {
+    subscriptionConfig: {
+      packageName: "com.antivirusalai",
+      productId: "alai_plus",
+      basePlans: [
+        { basePlanId: "monthly", state: "ACTIVE" },
+        { basePlanId: "annual", state: "INACTIVE" },
+        { basePlanId: "legacy", state: "ACTIVE" }
+      ]
+    }
   });
 });
 
 test("billing readiness stays closed when Google Play has no active supported base plan", async () => {
   await withPlayApi(null, async () => {
-    const response = await worker.fetch(request("/v1/billing/status"), playBillingEnvironment(), {
-      subscriptionConfig: {
-        packageName: "com.antivirusalai",
-        productId: "alai_plus",
-        basePlans: [
-          { basePlanId: "monthly", state: "INACTIVE" },
-          { basePlanId: "annual", state: "INACTIVE" }
-        ]
-      }
-    });
+    const response = await worker.fetch(request("/v1/billing/status"), playBillingEnvironment());
     assert.equal(response.status, 200);
     const result = await json(response);
     assert.equal(result.checkoutReady, false);
     assert.deepEqual(result.activeBasePlans, []);
+  }, {
+    subscriptionConfig: {
+      packageName: "com.antivirusalai",
+      productId: "alai_plus",
+      basePlans: [
+        { basePlanId: "monthly", state: "INACTIVE" },
+        { basePlanId: "annual", state: "INACTIVE" }
+      ]
+    }
   });
 });
 
 test("billing readiness fails closed when Google Play Publisher API is unavailable", async () => {
   await withPlayApi(null, async () => {
-    const response = await worker.fetch(request("/v1/billing/status"), playBillingEnvironment(), {
-      subscriptionStatus: 403
-    });
+    const response = await worker.fetch(request("/v1/billing/status"), playBillingEnvironment());
     assert.equal(response.status, 503);
     assert.equal((await json(response)).checkoutReady, false);
-  });
+  }, { subscriptionStatus: 403 });
 });
 
 test("billing readiness never reports configured when the service account is missing", async () => {
