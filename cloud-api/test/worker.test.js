@@ -300,7 +300,19 @@ function playBillingEnvironment(db = makeD1()) {
     PLAY_SERVICE_ACCOUNT_JSON: playServiceAccount
   };
 }
-async function withPlayApi(purchase, callback, { failAck = false, status = 200 } = {}) {
+async function withPlayApi(purchase, callback, {
+  failAck = false,
+  status = 200,
+  subscriptionStatus = 200,
+  subscriptionConfig = {
+    packageName: "com.antivirusalai",
+    productId: "alai_plus",
+    basePlans: [
+      { basePlanId: "monthly", state: "ACTIVE" },
+      { basePlanId: "annual", state: "ACTIVE" }
+    ]
+  }
+} = {}) {
   const originalFetch = globalThis.fetch;
   const calls = [];
   globalThis.fetch = async (input, init = {}) => {
@@ -310,6 +322,10 @@ async function withPlayApi(purchase, callback, { failAck = false, status = 200 }
       return new Response(JSON.stringify({ access_token: "test-play-access-token", expires_in: 3600 }), {
         status: 200, headers: { "content-type": "application/json" }
       });
+    }
+    if (url.includes("/subscriptions/alai_plus")) {
+      return new Response(subscriptionStatus === 200 ? JSON.stringify(subscriptionConfig) : "{}",
+        { status: subscriptionStatus, headers: { "content-type": "application/json" } });
     }
     if (url.includes(":acknowledge")) {
       return new Response(failAck ? JSON.stringify({ error: "ack failed" }) : "{}", {
@@ -499,4 +515,76 @@ test("Play subscription verification maps unknown Google purchase tokens to an i
     assert.equal(response.status, 400);
     assert.equal((await json(response)).error, "INVALID_PURCHASE_TOKEN");
   }, { status: 404 });
+});
+
+
+test("billing readiness stays closed until the Google Play product and active base plans are verified", async () => {
+  await withPlayApi(null, async calls => {
+    const response = await worker.fetch(request("/v1/billing/status"), playBillingEnvironment());
+    assert.equal(response.status, 200);
+    const result = await json(response);
+    assert.equal(result.ok, true);
+    assert.equal(result.checkoutReady, true);
+    assert.deepEqual(result.activeBasePlans, ["annual", "monthly"]);
+    assert.ok(calls.some(call => call.url.endsWith("/applications/com.antivirusalai/subscriptions/alai_plus")));
+  });
+});
+
+test("billing readiness exposes only configured base plans that Google marks ACTIVE", async () => {
+  await withPlayApi(null, async () => {
+    const response = await worker.fetch(request("/v1/billing/status"), playBillingEnvironment(), {
+      subscriptionConfig: {
+        packageName: "com.antivirusalai",
+        productId: "alai_plus",
+        basePlans: [
+          { basePlanId: "monthly", state: "ACTIVE" },
+          { basePlanId: "annual", state: "INACTIVE" },
+          { basePlanId: "legacy", state: "ACTIVE" }
+        ]
+      }
+    });
+    assert.equal(response.status, 200);
+    const result = await json(response);
+    assert.equal(result.checkoutReady, true);
+    assert.deepEqual(result.activeBasePlans, ["monthly"]);
+  });
+});
+
+test("billing readiness stays closed when Google Play has no active supported base plan", async () => {
+  await withPlayApi(null, async () => {
+    const response = await worker.fetch(request("/v1/billing/status"), playBillingEnvironment(), {
+      subscriptionConfig: {
+        packageName: "com.antivirusalai",
+        productId: "alai_plus",
+        basePlans: [
+          { basePlanId: "monthly", state: "INACTIVE" },
+          { basePlanId: "annual", state: "INACTIVE" }
+        ]
+      }
+    });
+    assert.equal(response.status, 200);
+    const result = await json(response);
+    assert.equal(result.checkoutReady, false);
+    assert.deepEqual(result.activeBasePlans, []);
+  });
+});
+
+test("billing readiness fails closed when Google Play Publisher API is unavailable", async () => {
+  await withPlayApi(null, async () => {
+    const response = await worker.fetch(request("/v1/billing/status"), playBillingEnvironment(), {
+      subscriptionStatus: 403
+    });
+    assert.equal(response.status, 503);
+    assert.equal((await json(response)).checkoutReady, false);
+  });
+});
+
+test("billing readiness never reports configured when the service account is missing", async () => {
+  const env = playBillingEnvironment();
+  delete env.PLAY_SERVICE_ACCOUNT_JSON;
+  const response = await worker.fetch(request("/v1/billing/status"), env);
+  assert.equal(response.status, 200);
+  const result = await json(response);
+  assert.equal(result.checkoutReady, false);
+  assert.deepEqual(result.activeBasePlans, []);
 });

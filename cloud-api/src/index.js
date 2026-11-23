@@ -242,6 +242,54 @@ async function getPlayPublisherAccessToken(env, nowSeconds) {
   return token;
 }
 
+async function fetchGoogleSubscriptionConfiguration(env, nowSeconds) {
+  const packageName = env.PLAY_PACKAGE_NAME;
+  const productId = env.PLAY_SUBSCRIPTION_PRODUCT_ID;
+  const requiredBasePlans = String(env.PLAY_SUBSCRIPTION_BASE_PLANS || "")
+    .split(",").map(value => value.trim()).filter(Boolean);
+
+  if (packageName !== "com.antivirusalai" ||
+      typeof productId !== "string" ||
+      !/^[a-z0-9_.]{1,40}$/.test(productId) ||
+      requiredBasePlans.length === 0 ||
+      requiredBasePlans.some(value => !/^[a-z0-9-]{1,63}$/.test(value)) ||
+      new Set(requiredBasePlans).size !== requiredBasePlans.length) {
+    throw Error("PLAY_BILLING_NOT_CONFIGURED");
+  }
+
+  const accessToken = await getPlayPublisherAccessToken(env, nowSeconds);
+  const url = PLAY_API_ROOT + "/applications/" + encodeURIComponent(packageName) +
+    "/subscriptions/" + encodeURIComponent(productId);
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "GET",
+      headers: { authorization: "Bearer " + accessToken, accept: "application/json" }
+    });
+  } catch {
+    throw Error("PLAY_GOOGLE_API_UNAVAILABLE");
+  }
+  if (response.status === 404) throw Error("PLAY_SUBSCRIPTION_PRODUCT_MISSING");
+  if (!response.ok) throw Error("PLAY_GOOGLE_API_UNAVAILABLE");
+
+  let subscription;
+  try { subscription = await response.json(); }
+  catch { throw Error("PLAY_GOOGLE_API_UNAVAILABLE"); }
+  if (subscription.packageName !== packageName || subscription.productId !== productId ||
+      !Array.isArray(subscription.basePlans)) {
+    throw Error("PLAY_SUBSCRIPTION_CONFIGURATION_INVALID");
+  }
+
+  const activeBasePlans = subscription.basePlans
+    .filter(plan => plan && plan.state === "ACTIVE" && requiredBasePlans.includes(plan.basePlanId))
+    .map(plan => plan.basePlanId);
+  return {
+    packageName,
+    productId,
+    activeBasePlans: [...new Set(activeBasePlans)].sort()
+  };
+}
+
 async function fetchGoogleSubscriptionPurchase(env, purchaseToken, nowSeconds) {
   const packageName = env.PLAY_PACKAGE_NAME;
   const productId = env.PLAY_SUBSCRIPTION_PRODUCT_ID;
@@ -387,6 +435,24 @@ export default { async fetch(req,env){
    }
  }
 
+ if(p==="/v1/billing/status"&&req.method==="GET"){
+   try{
+     const configuration=await fetchGoogleSubscriptionConfiguration(env,Math.floor(Date.now()/1000));
+     return out({
+       ok:true,
+       checkoutReady:configuration.activeBasePlans.length>0,
+       productId:configuration.productId,
+       activeBasePlans:configuration.activeBasePlans
+     });
+   }catch(error){
+     const code=error?.message||"";
+     if(code==="PLAY_BILLING_NOT_CONFIGURED"||code==="PLAY_SERVICE_ACCOUNT_INVALID"||
+        code==="PLAY_SUBSCRIPTION_PRODUCT_MISSING"||code==="PLAY_SUBSCRIPTION_CONFIGURATION_INVALID"){
+       return out({ok:true,checkoutReady:false,productId:null,activeBasePlans:[],reason:"NOT_CONFIGURED"});
+     }
+     return out({ok:false,checkoutReady:false,productId:null,activeBasePlans:[],error:"BILLING_VERIFICATION_UNAVAILABLE"},503);
+   }
+ }
  if(p==="/v1/billing/subscription/verify"&&req.method==="POST"){
    try {
      const x=await body(req,16_384);

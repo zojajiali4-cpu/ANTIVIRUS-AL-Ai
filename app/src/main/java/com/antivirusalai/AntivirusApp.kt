@@ -3230,7 +3230,7 @@ private fun StoreScreen(
             title = when {
                 billingState.entitled && billingState.isTrial -> tr(fa, "دوره آزمایشی فعال", "Free trial active")
                 billingState.entitled -> tr(fa, "اشتراک تأییدشده فعال است", "Verified membership is active")
-                billingState.connected && billingState.offers.isNotEmpty() -> tr(fa, "پیشنهادهای منطقه‌ای آماده‌اند", "Regional offers are available")
+                billingState.checkoutReady && billingState.offers.isNotEmpty() -> tr(fa, "پیشنهادهای منطقه‌ای آماده‌اند", "Regional offers are available")
                 else -> tr(fa, "خرید فعلاً در دسترس نیست", "Checkout is not currently available")
             },
             body = when {
@@ -3242,7 +3242,7 @@ private fun StoreScreen(
                     fa, "اشتراک شما تا " + (expiryText ?: "تاریخ اعلام‌شده در Google Play") + " معتبر است. برای لغو یا تغییر آن از Google Play استفاده کن.",
                     "Your verified subscription is valid until " + (expiryText ?: "the expiry shown by Google Play") + ". Manage renewal through Google Play."
                 )
-                billingState.connected && billingState.offers.isNotEmpty() -> tr(
+                billingState.checkoutReady && billingState.offers.isNotEmpty() -> tr(
                     fa, "مدت دوره آزمایشی، قیمت بعد از پایان آن، ارز و زمان تمدید پیش از تأیید نهایی در صفحه امن Google Play نمایش داده می‌شود. پیشنهاد رایگان فقط در صورت واجدشرایط بودن حساب قابل نمایش است.",
                     "Google Play shows the trial duration, post-trial price, currency and renewal terms before confirmation. A free trial appears only when this account is eligible."
                 )
@@ -3251,7 +3251,7 @@ private fun StoreScreen(
                     "The Play connection, product configuration or server verification is not ready. No payment or premium access is activated. Core offline scanning remains free."
                 )
             },
-            warning = !billingState.entitled && (!billingState.connected || billingState.offers.isEmpty())
+            warning = !billingState.entitled && (!billingState.checkoutReady || billingState.offers.isEmpty())
         )
         PlanCard(
             fa = fa, name = "FREE",
@@ -3274,6 +3274,7 @@ private fun StoreScreen(
             offer = monthly,
             badge = if (monthly?.hasFreeTrial == true) tr(fa, "دوره آزمایشی", "FREE TRIAL") else tr(fa, "Google Play", "GOOGLE PLAY"),
             entitled = billingState.entitled, loading = billingState.loading,
+            checkoutReady = billingState.checkoutReady,
             onClick = { onPurchase("monthly") }
         )
         BillingPlanCard(
@@ -3282,6 +3283,7 @@ private fun StoreScreen(
             offer = annual,
             badge = if (annual?.hasFreeTrial == true) tr(fa, "دوره آزمایشی", "FREE TRIAL") else tr(fa, "Google Play", "GOOGLE PLAY"),
             entitled = billingState.entitled, loading = billingState.loading,
+            checkoutReady = billingState.checkoutReady,
             onClick = { onPurchase("annual") }
         )
         InfoBanner(
@@ -3316,6 +3318,7 @@ private fun BillingPlanCard(
     badge: String,
     entitled: Boolean,
     loading: Boolean,
+    checkoutReady: Boolean,
     onClick: () -> Unit
 ) {
     val available = offer != null
@@ -3349,7 +3352,7 @@ private fun BillingPlanCard(
                     "Purchase is enabled only when a valid Google Play offer and secure server verification are available."),
                 color = TextSecondary, fontSize = 10.sp, lineHeight = 15.sp
             )
-            Button(onClick = onClick, enabled = available && !entitled && !loading,
+            Button(onClick = onClick, enabled = available && checkoutReady && !entitled && !loading,
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = BrandBlue),
                 shape = RoundedCornerShape(13.dp)) {
@@ -3357,6 +3360,7 @@ private fun BillingPlanCard(
                     entitled -> tr(fa, "عضویت فعال است", "Membership active")
                     loading -> tr(fa, "در حال بررسی…", "Verifying…")
                     offer?.hasFreeTrial == true -> tr(fa, "شروع دوره آزمایشی", "Start free trial")
+                    available && !checkoutReady -> tr(fa, "اعتبارسنجی خرید آماده نیست", "Secure verification unavailable")
                     available -> tr(fa, "ادامه با Google Play", "Continue with Google Play")
                     else -> tr(fa, "فعلاً در دسترس نیست", "Not available")
                 })

@@ -7,7 +7,6 @@ import com.android.billingclient.api.BillingClientStateListener
 import com.android.billingclient.api.BillingFlowParams
 import com.android.billingclient.api.BillingResult
 import com.android.billingclient.api.PendingPurchasesParams
-import com.android.billingclient.api.Product
 import com.android.billingclient.api.ProductDetails
 import com.android.billingclient.api.Purchase
 import com.android.billingclient.api.PurchasesUpdatedListener
@@ -34,6 +33,7 @@ data class PlayBillingUiState(
     val connected: Boolean = false,
     val loading: Boolean = false,
     val offers: List<PlayPlanOffer> = emptyList(),
+    val checkoutReady: Boolean = false,
     val entitled: Boolean = false,
     val isTrial: Boolean = false,
     val currentBasePlanId: String? = null,
@@ -50,6 +50,10 @@ class PlayBillingManager(
     private var uiState = PlayBillingUiState()
     private var closed = false
     private val processingTokens = mutableSetOf<String>()
+    private var queriedCatalogOffers: List<PlayPlanOffer> = emptyList()
+    private var activeBasePlans: Set<String> = emptySet()
+    private var billingStatusLoaded = false
+    private var billingStatusError: String? = null
     private val billingClient = BillingClient.newBuilder(context.applicationContext)
         .setListener(this)
         .enablePendingPurchases(PendingPurchasesParams.newBuilder().enableOneTimeProducts().build())
@@ -81,6 +85,11 @@ class PlayBillingManager(
     fun refresh() {
         if (closed) return
         if (!billingClient.isReady) { connect(); return }
+        billingStatusLoaded = false
+        activeBasePlans = emptySet()
+        queriedCatalogOffers = emptyList()
+        publish(uiState.copy(loading = true, checkoutReady = false, offers = emptyList(), message = null))
+        queryBillingStatus()
         queryCatalog()
         queryOwnedPurchases()
     }
@@ -103,6 +112,11 @@ class PlayBillingManager(
         }
         if (basePlanId !in setOf("monthly", "annual")) {
             publish(uiState.copy(message = "This subscription option is not supported."))
+            return
+        }
+        if (!uiState.checkoutReady || basePlanId !in activeBasePlans) {
+            publish(uiState.copy(loading = false,
+                message = "Secure billing verification is not ready for this subscription plan. No payment was started."))
             return
         }
         publish(uiState.copy(loading = true, message = null))
@@ -158,28 +172,69 @@ class PlayBillingManager(
                 .setProductType(BillingClient.ProductType.SUBS).build()
         )).build()
 
+    private fun queryBillingStatus() {
+        scope.launch {
+            try {
+                val status = withContext(Dispatchers.IO) { CloudBillingApi.billingStatus() }
+                billingStatusLoaded = true
+                activeBasePlans = status.activeBasePlans
+                billingStatusError = if (status.checkoutReady) null else
+                    "Play Console subscription product or server verification is not configured."
+                publishAvailableOffers()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                billingStatusLoaded = true
+                activeBasePlans = emptySet()
+                billingStatusError = "Secure billing verification is unavailable. Purchases remain disabled."
+                publishAvailableOffers()
+            }
+        }
+    }
+
+    private fun publishAvailableOffers() {
+        val activeOffers = if (billingStatusLoaded) {
+            queriedCatalogOffers.filter { it.basePlanId in activeBasePlans }
+        } else emptyList()
+        val ready = billingStatusLoaded && billingClient.isReady && activeBasePlans.isNotEmpty()
+        publish(uiState.copy(
+            connected = billingClient.isReady,
+            loading = false,
+            offers = activeOffers,
+            checkoutReady = ready,
+            message = when {
+                !billingStatusLoaded -> "Checking secure billing configuration…"
+                !ready -> billingStatusError ?: "No active regional subscription plans are configured."
+                activeOffers.isEmpty() -> "No eligible subscription offers are currently available for this Play account or region."
+                else -> null
+            }
+        ))
+    }
+
     private fun queryCatalog() {
         billingClient.queryProductDetailsAsync(productQueryParams()) { result, query ->
             if (closed) return@queryProductDetailsAsync
             if (result.responseCode != BillingClient.BillingResponseCode.OK) {
-                publish(uiState.copy(connected = true, loading = false,
-                    message = "Google Play could not load regional subscription prices."))
+                queriedCatalogOffers = emptyList()
+                publish(uiState.copy(
+                    connected = true,
+                    loading = false,
+                    offers = emptyList(),
+                    checkoutReady = false,
+                    message = "Google Play could not load regional subscription prices."
+                ))
                 return@queryProductDetailsAsync
             }
             val details = query.productDetailsList.firstOrNull {
                 it.productId == BuildConfig.ALAI_SUBSCRIPTION_PRODUCT_ID
             }
-            val offers = details?.subscriptionOfferDetails.orEmpty()
+            queriedCatalogOffers = details?.subscriptionOfferDetails.orEmpty()
                 .mapNotNull(::toPlanOffer)
-                .groupBy { it.basePlanId }.values
+                .groupBy { it.basePlanId }
+                .values
                 .mapNotNull { candidates -> candidates.maxByOrNull { if (it.hasFreeTrial) 1 else 0 } }
                 .sortedBy { it.basePlanId }
-            publish(uiState.copy(
-                connected = true, loading = false, offers = offers,
-                message = if (offers.isEmpty()) {
-                    "No eligible subscription offers are configured for this Play account or region."
-                } else null
-            ))
+            publishAvailableOffers()
         }
     }
 

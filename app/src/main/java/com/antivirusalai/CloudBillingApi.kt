@@ -5,6 +5,11 @@ import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 
+data class CloudBillingStatus(
+    val checkoutReady: Boolean,
+    val activeBasePlans: Set<String>
+)
+
 data class CloudSubscriptionEntitlement(
     val entitled: Boolean,
     val subscriptionState: String,
@@ -17,6 +22,46 @@ data class CloudSubscriptionEntitlement(
 object CloudBillingApi {
     private const val MAX_RESPONSE_BYTES = 32 * 1024
     private const val MAX_TOKEN_LENGTH = 4096
+
+    fun billingStatus(): CloudBillingStatus {
+        val base = BuildConfig.ALAI_API_BASE_URL.trimEnd('/')
+        require(base.startsWith("https://")) { "Billing status requires HTTPS." }
+        val connection = (URL(base + "/v1/billing/status").openConnection()
+            as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 8_000
+            readTimeout = 12_000
+            instanceFollowRedirects = false
+            setRequestProperty("Accept", "application/json")
+        }
+        return try {
+            val status = connection.responseCode
+            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+            val responseText = stream?.let(::readBounded).orEmpty()
+            if (status !in 200..299) {
+                throw IllegalStateException("Secure billing readiness check is unavailable.")
+            }
+            val root = JSONObject(responseText)
+            if (!root.optBoolean("ok", false)) {
+                throw IllegalStateException("Secure billing readiness check returned an invalid response.")
+            }
+            val allowedPlans = setOf("monthly", "annual")
+            val values = root.optJSONArray("activeBasePlans")
+            val activePlans = buildSet {
+                if (values != null) {
+                    for (index in 0 until values.length()) {
+                        values.optString(index).takeIf { it in allowedPlans }?.let(::add)
+                    }
+                }
+            }
+            CloudBillingStatus(
+                checkoutReady = root.optBoolean("checkoutReady", false) && activePlans.isNotEmpty(),
+                activeBasePlans = activePlans
+            )
+        } finally {
+            connection.disconnect()
+        }
+    }
 
     fun verifySubscription(purchaseToken: String): CloudSubscriptionEntitlement {
         val token = validatePurchaseToken(purchaseToken)
