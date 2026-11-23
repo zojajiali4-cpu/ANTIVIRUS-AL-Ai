@@ -181,9 +181,31 @@ jobs:
           AVD_NAME="antivirus-api-$API_LEVEL"
           EMULATOR_LOG="$RUNNER_TEMP/emulator-$API_LEVEL.log"
 
+          # Pin the AVD manager and emulator to the same per-runner directory.
+          # This avoids relying on differing Android user-home defaults.
+          export ANDROID_USER_HOME="${ANDROID_USER_HOME:-$HOME/.android}"
+          export ANDROID_AVD_HOME="${ANDROID_AVD_HOME:-$ANDROID_USER_HOME/avd}"
+          mkdir -p "$ANDROID_AVD_HOME"
+          AVD_INI="$ANDROID_AVD_HOME/$AVD_NAME.ini"
+          AVD_DIR="$ANDROID_AVD_HOME/$AVD_NAME.avd"
+
           "$SDKMANAGER_DIR/sdkmanager" "emulator" "system-images;android-$API_LEVEL;google_apis;x86_64"
           echo "no" | "$AVDMANAGER" create avd --force --name "$AVD_NAME" \
             --package "system-images;android-$API_LEVEL;google_apis;x86_64" --device pixel_2
+
+          # Fail at creation with actionable diagnostics rather than launching
+          # an emulator that cannot resolve the AVD name.
+          if [[ ! -s "$AVD_INI" || ! -d "$AVD_DIR" ]]; then
+            echo "::error::AVDManager did not create the expected AVD at $ANDROID_AVD_HOME."
+            "$AVDMANAGER" list avd || true
+            find "$ANDROID_USER_HOME" -maxdepth 3 -type f -name "$AVD_NAME.ini" -print 2>/dev/null || true
+            exit 1
+          fi
+          if ! "$EMULATOR" -list-avds | grep -Fxq "$AVD_NAME"; then
+            echo "::error::The emulator cannot enumerate the newly created AVD '$AVD_NAME'."
+            "$EMULATOR" -list-avds || true
+            exit 1
+          fi
 
           "$ADB" start-server
           "$EMULATOR" -avd "$AVD_NAME" -port 5554 -no-window -gpu swiftshader_indirect \
