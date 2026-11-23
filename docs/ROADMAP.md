@@ -41,3 +41,19 @@
 - [ ] Resolve all critical/high findings and publish a reproducible report.
 - [ ] Complete Play Console permission declarations for MANAGE_EXTERNAL_STORAGE and QUERY_ALL_PACKAGES.
 - [ ] Complete privacy, retention, accessibility, localization, billing, release-signing, and supply-chain reviews.
+
+
+## Commercial MVP — regional trial-first billing (development PR)
+
+- [x] Add Google Play Billing 9.1.0 client and dynamically query region/account-eligible subscription offers.
+- [x] Read localized price/currency and all price phases from Google Play; do not hardcode regional prices or trial length.
+- [x] Implement backend Google Play Publisher OAuth and subscription-token verification.
+- [x] Keep checkout closed until the backend confirms the Play product and active base plans.
+- [x] Verify subscription state and expiry server-side; acknowledge verified new purchases and persist only a purchase-token SHA-256 digest.
+- [x] Add restore and Google Play subscription-management entry points.
+- [x] Keep the basic offline scanner and reports free; gate optional cloud-hash reputation behind verified entitlement and separate consent.
+- [ ] Create and activate the `alai_plus` product and `monthly` / `annual` base plans in Play Console with trial offers and selected regional availability.
+- [ ] Configure the dedicated Android Publisher service account and Cloudflare Worker secret.
+- [ ] Apply D1 migration `0002_play_billing.sql` and deploy the Worker.
+- [ ] Run internal-track end-to-end tests for new trial, paid conversion, cancellation, grace period, expiry, restore and duplicate purchase.
+- [ ] Complete region-specific business, tax, payout, consumer-protection, privacy and support readiness before opening each market.

@@ -45,12 +45,21 @@ The current manifest requests `MANAGE_EXTERNAL_STORAGE` and `QUERY_ALL_PACKAGES`
 
 ### 4. Store, cloud service and intelligence activation
 
-- [ ] Connect Google Play Billing and verify purchase, subscription acknowledgement, restore, cancellation and entitlement flows. The current Store screen is a plan preview only and does not collect payment or activate subscriptions.
+- [x] Implement Google Play Billing client, dynamically localized offer display, server-side purchase verification/acknowledgement, restore, and subscription-management entry points on the regional trial development PR. [ ] Before activation, configure Play Console product/base plans/offers and region availability, authorize the dedicated Android Publisher service account, set the Worker secret, apply the D1 migration, deploy the Worker, and complete end-to-end internal-track tests. Until those operational gates pass, checkout must remain disabled and no payment or entitlement may be implied.
 - [ ] Deploy and verify the Cloud Worker, D1 schema, rate limits, operational monitoring and privacy/retention disclosures before advertising cloud reputation as active.
 - [ ] Publish and install a reviewed, signed production threat feed and content-rule bundle. Built-in test indicators and the unconfigured ML scaffold are not a production detection dataset or model.
 - [ ] Keep offline URL-structure heuristics labelled as heuristic-only; do not market them as live phishing or domain-reputation protection.
 
-### 5. Release artifact and account
+### 5. Regional trial commerce configuration
+
+- [ ] Create Google Play subscription product `alai_plus` with auto-renewing base plans `monthly` and `annual`.
+- [ ] Configure free-trial offer phases and eligible countries/regions in Play Console. Do not hardcode a trial duration, currency, price or regional list in the APK.
+- [ ] Restrict the first regional rollout to markets for which merchant registration, payout, tax, consumer-law, privacy and support obligations are cleared by the account owner.
+- [ ] Configure the dedicated Android Publisher service account with minimum required access and store its JSON only as Cloudflare Worker secret `PLAY_SERVICE_ACCOUNT_JSON`.
+- [ ] Apply D1 migration `0002_play_billing.sql`; deploy and verify the Worker readiness endpoint.
+- [ ] Test eligible and ineligible accounts, new trial, paid plan, restore, cancel, grace period, expiry, pending payment, duplicate purchase and service outage before enabling checkout.
+
+### 6. Release artifact and account
 
 - [ ] Complete the unsigned AAB preflight and inspect its package/version/permissions for the exact release commit.
 - [ ] Create a production-signed Android App Bundle (AAB), not a debug APK or unsigned preflight artifact.

@@ -73,7 +73,7 @@ See `docs/DETECTION_VALIDATION.md`, `docs/THREAT_INTEL_OPERATIONS.md`, and `docs
 
 ## Build
 
-The Android package version is `0.3.0` (`versionCode=3`). GitHub Actions publishes `ANTIVIRUS-AL-AI-v0.3.0-debug.apk` with source commit, workflow run ID, signer-certificate fingerprint, and SHA-256 metadata. This debug APK is for testing only and is not a production-signed release package. The Store currently previews plans; Google Play Billing is not connected.
+The Android package version is `0.3.0` (`versionCode=3`). GitHub Actions publishes `ANTIVIRUS-AL-AI-v0.3.0-debug.apk` with source commit, workflow run ID, signer-certificate fingerprint, and SHA-256 metadata. This debug APK is for testing only and is not a production-signed release package. Google Play Billing 9.1.0, regional offer display, and server-verified trial/subscription entitlement code are integrated on this development PR. Checkout remains disabled until the Play Console product/base plans, service-account permissions and Worker secret, D1 migration, and Worker deployment are configured and verified. No real payment has been enabled.
 
 
 ## Reviewed Android content-rule seed
@@ -81,3 +81,10 @@ The Android package version is `0.3.0` (`versionCode=3`). GitHub Actions publish
 This implementation branch now includes a reviewed, grouped Android indicator rule adapted from WithSecure Labs' `WITHSECURELABS_Fallspy` rule in the `WithSecureLabs/iocs` repository (pinned commit `1a8384468dd292c6d2c5114c32e42dc0da1f5ae1`, BSD 2-Clause). The source rule requires **4 of 10** string indicators. ANTIVIRUS AL AI preserves that grouping, classifies the adaptation as **SUSPICIOUS** rather than confirmed malware, and records source and licence metadata. The current matcher does not implement YARA's `fullword` modifier, so the adaptation is deliberately conservative and is not equivalent to running the original YARA rule.
 
 The CSV and publisher workflow are included in this branch. They do not activate signatures by themselves: publishing still requires the matching `ALAI_FEED_SIGNING_KEY_PEM` GitHub Secret and the two owner attestation secrets `ALAI_CONTENT_RULES_REVIEWED=true` and `ALAI_CONTENT_RULES_COMMERCIAL_USE_APPROVED=true`. The publishing workflow runs only from `main` and writes the signed bundle to `security-feed/content-rules/latest.alrules`. Until that signed bundle has been published and fetched by a device, only the built-in harmless self-test marker remains active.
+
+
+## Regional trial commerce — development integration
+
+The development branch contains a Google Play subscription integration using product ID `alai_plus` and auto-renewing base plans `monthly` and `annual`. The app obtains eligible offers, localized prices, currency, billing periods, and trial phases from Google Play. The server verifies the purchase with the Android Publisher API before any paid entitlement is granted. Base offline scanning and local reports remain free; optional hash reputation is a PLUS feature and still requires separate user consent.
+
+This does not mean checkout is active. Real purchases remain disabled until Play Console products/offers and eligible regions are configured, the dedicated service account is authorized, the Worker secret and D1 migration are installed, the Worker is deployed, and end-to-end license/restore/cancel testing is completed. See [Regional Trial Commerce](docs/REGIONAL_TRIAL_COMMERCE.md).
