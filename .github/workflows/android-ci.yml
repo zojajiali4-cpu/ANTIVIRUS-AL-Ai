@@ -230,7 +230,18 @@ jobs:
               tail -n 200 "$EMULATOR_LOG" 2>&1 || true
               exit 1
             fi
-            if timeout 8s "$ADB" devices 2>/dev/null | grep -Eq '^emulator-5554[[:space:]]+device
+            if timeout 8s "$ADB" devices 2>/dev/null | grep -Eq "^emulator-5554[[:space:]]+device$"; then
+              device_ready=true
+              echo "ADB detected emulator API $API_LEVEL (attempt $attempt/120)."
+              break
+            fi
+            sleep 5
+          done
+          if [[ "$device_ready" != true ]]; then
+            echo "::error::ADB did not detect emulator API $API_LEVEL within 10 minutes."
+            exit 1
+          fi
+
           booted=false
           for attempt in $(seq 1 240); do
             if [[ "$("$ADB" -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)" == "1" ]]; then
