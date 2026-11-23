@@ -29,6 +29,7 @@ android {
         versionName = "0.3.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "ALAI_API_BASE_URL", "\"https://antivirus-al-ai-api.zojajiali4.workers.dev\"")
+        buildConfigField("String", "ALAI_SUBSCRIPTION_PRODUCT_ID", "\"alai_plus\"")
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
         }
@@ -84,6 +85,7 @@ kotlin {
 
 dependencies {
     implementation(libs.androidx.activity.compose)
+    implementation(libs.play.billing)
     implementation("androidx.work:work-runtime-ktx:2.12.0")
     implementation(libs.androidx.compose.animation.core)
     implementation("androidx.lifecycle:lifecycle-livedata-ktx:2.9.4")

@@ -395,11 +395,12 @@ export default { async fetch(req,env){
      if(token.length<20||token.length>4096||/[\s\x00-\x1f\x7f]/.test(token)) {
        return out({error:"INVALID_PURCHASE_TOKEN"},400);
      }
+     if(!env.PLAY_SERVICE_ACCOUNT_JSON||!env.PLAY_PACKAGE_NAME||
+        !env.PLAY_SUBSCRIPTION_PRODUCT_ID||!env.PLAY_SUBSCRIPTION_BASE_PLANS) {
+       return out({error:"BILLING_NOT_CONFIGURED"},503);
+     }
      if(requestedProduct!==env.PLAY_SUBSCRIPTION_PRODUCT_ID) {
        return out({error:"PRODUCT_NOT_ALLOWED"},400);
-     }
-     if(!env.PLAY_SERVICE_ACCOUNT_JSON||!env.PLAY_PACKAGE_NAME||!env.PLAY_SUBSCRIPTION_BASE_PLANS) {
-       return out({error:"BILLING_NOT_CONFIGURED"},503);
      }
      const nowSeconds=Math.floor(Date.now()/1000);
      const verified=await fetchGoogleSubscriptionPurchase(env,token,nowSeconds);

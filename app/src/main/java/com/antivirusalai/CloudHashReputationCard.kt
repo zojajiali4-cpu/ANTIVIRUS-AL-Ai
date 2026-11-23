@@ -32,7 +32,36 @@ import kotlinx.coroutines.withContext
  * content URIs or filesystem paths and never changes the local scan verdict.
  */
 @Composable
-fun CloudHashReputationCard(result: ScanResult, fa: Boolean) {
+fun CloudHashReputationCard(
+    result: ScanResult,
+    fa: Boolean,
+    premiumAccess: Boolean,
+    onOpenStore: () -> Unit
+) {
+    if (!premiumAccess) {
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = if (fa) "اعتبارسنجی آنلاین هش — قابلیت PLUS" else "Online hash reputation — PLUS",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = if (fa) {
+                        "اسکن و گزارش محلی رایگان است. استعلام ابری اختیاری فقط پس از Trial یا اشتراک تأییدشده و با اجازه جداگانه شما انجام می‌شود."
+                    } else {
+                        "Local scanning and reports remain free. Optional cloud lookup requires a verified trial or subscription and separate consent."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Button(onClick = onOpenStore) {
+                    Text(if (fa) "مشاهده دوره آزمایشی" else "View free-trial offers")
+                }
+            }
+        }
+        return
+    }
     val digest = result.sha256
     val validDigest = digest.matches(Regex("[0-9a-fA-F]{64}"))
     val scope = rememberCoroutineScope()

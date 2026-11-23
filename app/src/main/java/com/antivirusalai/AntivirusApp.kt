@@ -143,6 +143,16 @@ private enum class AppInventoryConsentAction {
 @Composable
 fun AntivirusApp(inPictureInPicture: Boolean = false) {
     val context = LocalContext.current
+    var billingUiState by remember { mutableStateOf(PlayBillingUiState()) }
+    val billingManager = remember(context) {
+        (context as? android.app.Activity)?.let { activity ->
+            PlayBillingManager(context, activity) { state -> billingUiState = state }
+        }
+    }
+    DisposableEffect(billingManager) {
+        billingManager?.connect()
+        onDispose { billingManager?.close() }
+    }
     val scope = rememberCoroutineScope()
     val workManager = remember(context) { WorkManager.getInstance(context.applicationContext) }
     val restoredScan = remember(context) { ScanReportStore.load(context.applicationContext) }
@@ -164,7 +174,6 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
     var deviceScanDeep by remember { mutableStateOf(restoredScan?.deep ?: false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
-    var selectedPlan by remember { mutableStateOf<String?>(null) }
     var featureInfo by remember { mutableStateOf<String?>(null) }
     var showPrivacy by remember { mutableStateOf(false) }
     var showStoragePermissionRationale by remember { mutableStateOf(false) }
@@ -594,6 +603,8 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
                                 deviceScanDeep = deviceScanDeep,
                                 errorMessage = errorMessage,
                                 notice = notice,
+                                premiumAccess = billingUiState.entitled,
+                                onOpenStore = { activeTab = MainTab.STORE.key },
                                 quarantining = quarantining,
                                 onFileScan = launchFileScan,
                                 onApkScan = launchApkScan,
@@ -632,7 +643,19 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
 
                             MainTab.STORE.key -> StoreScreen(
                                 fa = fa,
-                                onSelectPlan = { selectedPlan = it }
+                                billingState = billingUiState,
+                                onPurchase = { basePlan -> billingManager?.launchPlan(basePlan) },
+                                onRestore = { billingManager?.restorePurchases() },
+                                onManageSubscription = {
+                                    runCatching {
+                                        context.startActivity(Intent(
+                                            Intent.ACTION_VIEW,
+                                            Uri.parse("https://play.google.com/store/account/subscriptions?package=com.antivirusalai")
+                                        ))
+                                    }.onFailure {
+                                        errorMessage = tr(fa, "صفحه مدیریت اشتراک باز نشد.", "Subscription management could not be opened.")
+                                    }
+                                }
                             )
 
                             else -> SettingsScreen(
@@ -676,37 +699,6 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
                 }
             }
         }
-    }
-
-    selectedPlan?.let { plan ->
-        AlertDialog(
-            onDismissRequest = { selectedPlan = null },
-            containerColor = SurfaceRaised,
-            title = { Text(tr(fa, "فروشگاه ANTIVIRUS AL AI", "ANTIVIRUS AL AI Store"), color = TextPrimary) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                    Text(
-                        tr(fa, "طرح انتخاب‌شده: $plan", "Selected plan: $plan"),
-                        color = BrandTeal,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        tr(
-                            fa,
-                            "پرداخت Google Play و مدیریت اشتراک هنوز متصل نشده‌اند. هیچ مبلغی دریافت یا اشتراکی فعال نمی‌شود. این بخش فعلاً پیش‌نمایش طرح‌هاست.",
-                            "Google Play Billing and subscription management are not connected yet. No payment or subscription activation will occur. This is currently a plan preview."
-                        ),
-                        color = TextSecondary
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = { selectedPlan = null },
-                    colors = ButtonDefaults.buttonColors(containerColor = BrandTeal)
-                ) { Text(tr(fa, "متوجه شدم", "Got it"), color = AppBackground) }
-            }
-        )
     }
 
     featureInfo?.let { feature ->
@@ -2190,6 +2182,8 @@ private fun ScanCenterScreen(
     deviceScanDeep: Boolean,
     errorMessage: String?,
     notice: String?,
+    premiumAccess: Boolean,
+    onOpenStore: () -> Unit,
     quarantining: Boolean,
     onFileScan: () -> Unit,
     onApkScan: () -> Unit,
@@ -2320,7 +2314,11 @@ private fun ScanCenterScreen(
         }
 
         result?.let {
-            CloudHashReputationCard(result = it, fa = fa)
+            CloudHashReputationCard(
+                result = it, fa = fa,
+                premiumAccess = premiumAccess,
+                onOpenStore = onOpenStore
+            )
         }
 
         if (result == null && batchReport == null && errorMessage == null) {
@@ -3211,100 +3209,171 @@ private fun QuarantineVaultScreen(
 @Composable
 private fun StoreScreen(
     fa: Boolean,
-    onSelectPlan: (String) -> Unit
+    billingState: PlayBillingUiState,
+    onPurchase: (String) -> Unit,
+    onRestore: () -> Unit,
+    onManageSubscription: () -> Unit
 ) {
+    val monthly = billingState.offers.firstOrNull { it.basePlanId == "monthly" }
+    val annual = billingState.offers.firstOrNull { it.basePlanId == "annual" }
+    val expiryText = billingState.expiresAtEpochMillis?.let {
+        java.text.DateFormat.getDateInstance().format(java.util.Date(it))
+    }
     Column(verticalArrangement = Arrangement.spacedBy(15.dp)) {
         Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-            EyebrowLabel(tr(fa, "طرح‌های عضویت", "MEMBERSHIP"))
+            EyebrowLabel(tr(fa, "عضویت و دوره آزمایشی", "MEMBERSHIP & FREE TRIAL"))
             Text(tr(fa, "فروشگاه", "Store"), color = TextPrimary, fontSize = 25.sp, fontWeight = FontWeight.Bold)
-            Text(
-                tr(fa, "امکانات تکمیلی برای نیازهای مختلف", "Plans for different security needs"),
-                color = TextSecondary,
-                fontSize = 12.sp
-            )
+            Text(tr(fa, "قیمت و پیشنهادهای قابل‌خرید مستقیماً از Google Play دریافت می‌شوند.", "Prices and eligible offers come directly from Google Play."),
+                color = TextSecondary, fontSize = 12.sp)
         }
-
         InfoBanner(
-            title = tr(fa, "پرداخت هنوز فعال نیست", "Checkout is not active"),
-            body = tr(
-                fa,
-                "این نسخه کاتالوگ طرح‌ها را نشان می‌دهد. پرداخت Google Play، قیمت‌گذاری منطقه‌ای و مدیریت اشتراک هنوز متصل نشده‌اند؛ هیچ مبلغی دریافت نمی‌شود.",
-                "This version displays the plan catalogue only. Google Play Billing, regional pricing and subscription management are not connected. No payment will be taken."
-            ),
-            warning = true
+            title = when {
+                billingState.entitled && billingState.isTrial -> tr(fa, "دوره آزمایشی فعال", "Free trial active")
+                billingState.entitled -> tr(fa, "اشتراک تأییدشده فعال است", "Verified membership is active")
+                billingState.connected && billingState.offers.isNotEmpty() -> tr(fa, "پیشنهادهای منطقه‌ای آماده‌اند", "Regional offers are available")
+                else -> tr(fa, "خرید فعلاً در دسترس نیست", "Checkout is not currently available")
+            },
+            body = when {
+                billingState.entitled && billingState.isTrial -> tr(
+                    fa, "دسترسی آزمایشی شما تا " + (expiryText ?: "تاریخ اعلام‌شده در Google Play") + " فعال است. وضعیت توسط سرور و Google Play تأیید شده است.",
+                    "Your verified trial access is active until " + (expiryText ?: "the expiry shown by Google Play") + "."
+                )
+                billingState.entitled -> tr(
+                    fa, "اشتراک شما تا " + (expiryText ?: "تاریخ اعلام‌شده در Google Play") + " معتبر است. برای لغو یا تغییر آن از Google Play استفاده کن.",
+                    "Your verified subscription is valid until " + (expiryText ?: "the expiry shown by Google Play") + ". Manage renewal through Google Play."
+                )
+                billingState.connected && billingState.offers.isNotEmpty() -> tr(
+                    fa, "مدت دوره آزمایشی، قیمت بعد از پایان آن، ارز و زمان تمدید پیش از تأیید نهایی در صفحه امن Google Play نمایش داده می‌شود. پیشنهاد رایگان فقط در صورت واجدشرایط بودن حساب قابل نمایش است.",
+                    "Google Play shows the trial duration, post-trial price, currency and renewal terms before confirmation. A free trial appears only when this account is eligible."
+                )
+                else -> tr(
+                    fa, "اتصال فروشگاه یا پیکربندی محصول و سرویس اعتبارسنجی کامل نیست. هیچ پرداخت یا دسترسی ویژه‌ای فعال نمی‌شود. اسکن و امکانات پایه آفلاین همچنان رایگان‌اند.",
+                    "The Play connection, product configuration or server verification is not ready. No payment or premium access is activated. Core offline scanning remains free."
+                )
+            },
+            warning = !billingState.entitled && (!billingState.connected || billingState.offers.isEmpty())
         )
-
         PlanCard(
-            fa = fa,
-            name = "FREE",
+            fa = fa, name = "FREE",
             subtitle = tr(fa, "امنیت پایه، بدون هزینه", "Essential protection, no cost"),
             price = tr(fa, "رایگان", "Free"),
-            badge = tr(fa, "طرح فعلی", "CURRENT"),
+            badge = tr(fa, "همیشه رایگان", "ALWAYS FREE"),
             highlighted = true,
             features = listOf(
-                tr(fa, "اسکن سریع انتخابی و تحلیل پایه APK", "Selected-file scan and basic APK analysis"),
-                tr(fa, "گزارش شفاف و نمایش شواهد", "Transparent reports and evidence"),
-                tr(fa, "ذخیره نسخه رمزنگاری‌شده فایل", "Encrypted private copy"),
-                tr(fa, "پردازش محلی بدون آپلود محتوا", "Local processing without content uploads")
+                tr(fa, "اسکن انتخابی فایل و تحلیل پایه APK", "Selected-file scanning and basic APK analysis"),
+                tr(fa, "گزارش شفاف با نمایش شواهد", "Transparent evidence-based reports"),
+                tr(fa, "قرنطینه رمزنگاری‌شده در فضای خصوصی", "Encrypted quarantine in private app storage"),
+                tr(fa, "پردازش محلی بدون آپلود محتوای فایل", "Local processing without file-content uploads")
             ),
-            onSelect = { onSelectPlan("FREE") }
+            enabled = false,
+            onSelect = {}
         )
-        PlanCard(
-            fa = fa,
-            name = "PLUS",
-            subtitle = tr(fa, "اشتراک ماهانه", "Monthly membership"),
-            price = tr(fa, "قیمت هنگام عرضه", "Price at launch"),
-            badge = tr(fa, "به‌زودی", "COMING"),
-            highlighted = false,
-            features = listOf(
-                tr(fa, "به‌روزرسانی بانک تهدید پس از انتشار", "Threat-feed updates after launch"),
-                tr(fa, "اعتبارسنجی اختیاری هش فایل", "Optional hash reputation"),
-                tr(fa, "گزارش‌های امنیتی تکمیلی", "Expanded security reports")
-            ),
-            onSelect = { onSelectPlan("PLUS MONTHLY") }
+        BillingPlanCard(
+            fa = fa, name = tr(fa, "PLUS ماهانه", "PLUS MONTHLY"),
+            subtitle = tr(fa, "دوره آزمایشی در صورت واجدشرایط بودن", "Free trial when eligible"),
+            offer = monthly,
+            badge = if (monthly?.hasFreeTrial == true) tr(fa, "دوره آزمایشی", "FREE TRIAL") else tr(fa, "Google Play", "GOOGLE PLAY"),
+            entitled = billingState.entitled, loading = billingState.loading,
+            onClick = { onPurchase("monthly") }
         )
-        PlanCard(
-            fa = fa,
-            name = "PLUS ANNUAL",
-            subtitle = tr(fa, "اشتراک سالانه", "Annual membership"),
-            price = tr(fa, "قیمت هنگام عرضه", "Price at launch"),
-            badge = tr(fa, "به‌زودی", "COMING"),
-            highlighted = false,
-            features = listOf(
-                tr(fa, "تمام قابلیت‌های طرح PLUS", "All PLUS features"),
-                tr(fa, "مدیریت و بازیابی اشتراک", "Subscription management and restoration"),
-                tr(fa, "قیمت‌گذاری منطقه‌ای شفاف", "Transparent regional pricing")
-            ),
-            onSelect = { onSelectPlan("PLUS ANNUAL") }
+        BillingPlanCard(
+            fa = fa, name = tr(fa, "PLUS سالانه", "PLUS ANNUAL"),
+            subtitle = tr(fa, "دوره آزمایشی در صورت واجدشرایط بودن", "Free trial when eligible"),
+            offer = annual,
+            badge = if (annual?.hasFreeTrial == true) tr(fa, "دوره آزمایشی", "FREE TRIAL") else tr(fa, "Google Play", "GOOGLE PLAY"),
+            entitled = billingState.entitled, loading = billingState.loading,
+            onClick = { onPurchase("annual") }
         )
-        PlanCard(
-            fa = fa,
-            name = "PRO FAMILY",
-            subtitle = tr(fa, "برای چند دستگاه", "For multiple devices"),
-            price = tr(fa, "قیمت هنگام عرضه", "Price at launch"),
-            badge = tr(fa, "به‌زودی", "COMING"),
-            highlighted = false,
-            features = listOf(
-                tr(fa, "مدیریت چند دستگاه با رضایت کاربران", "Multi-device management with user consent"),
-                tr(fa, "نمای کلی امنیت خانواده", "Family security overview"),
-                tr(fa, "مدیریت اعضا و اشتراک", "Member and plan management")
-            ),
-            onSelect = { onSelectPlan("PRO FAMILY") }
+        InfoBanner(
+            title = tr(fa, "شفافیت تمدید و لغو", "Renewal and cancellation transparency"),
+            body = tr(
+                fa,
+                "دوره آزمایشی خودکار به اشتراک پولی همان طرح تبدیل می‌شود، مگر آن را پیش از موعد تمدید از طریق Google Play لغو کنی. قیمت دقیق، تاریخ اولین پرداخت و شرایط تمدید در صفحه تأیید Google Play نمایش داده می‌شود؛ ANTIVIRUS AL AI قیمت یا مدت Trial را حدس نمی‌زند.",
+                "A free trial converts to the selected paid plan unless it is canceled through Google Play before renewal. Google Play displays the exact price, first charge date and renewal terms; ANTIVIRUS AL AI never guesses trial length or price."
+            ), warning = true
         )
-        PlanCard(
-            fa = fa,
-            name = "LIFETIME OFFLINE",
-            subtitle = tr(fa, "مجوز یک‌باره برای ابزارهای محلی", "One-time licence for local tools"),
-            price = tr(fa, "قیمت هنگام عرضه", "Price at launch"),
-            badge = tr(fa, "به‌زودی", "COMING"),
-            highlighted = false,
-            features = listOf(
-                tr(fa, "قابلیت‌های محلی بدون سرویس ابری", "Local features without cloud dependency"),
-                tr(fa, "بدون تمدید اشتراک", "No subscription renewal"),
-                tr(fa, "به‌روزرسانی امنیتی طبق شرایط عرضه", "Security updates under release terms")
-            ),
-            onSelect = { onSelectPlan("LIFETIME OFFLINE") }
+        billingState.message?.let {
+            InfoBanner(title = tr(fa, "وضعیت فروشگاه", "Store status"), body = it, warning = !billingState.entitled)
+        }
+        OutlinedButton(onClick = onRestore, modifier = Modifier.fillMaxWidth(),
+            enabled = billingState.connected && !billingState.loading) {
+            Text(tr(fa, "بازیابی خریدها", "Restore purchases"))
+        }
+        if (billingState.entitled) {
+            OutlinedButton(onClick = onManageSubscription, modifier = Modifier.fillMaxWidth()) {
+                Text(tr(fa, "مدیریت یا لغو اشتراک در Google Play", "Manage or cancel in Google Play"))
+            }
+        }
+    }
+}
+
+@Composable
+private fun BillingPlanCard(
+    fa: Boolean,
+    name: String,
+    subtitle: String,
+    offer: PlayPlanOffer?,
+    badge: String,
+    entitled: Boolean,
+    loading: Boolean,
+    onClick: () -> Unit
+) {
+    val available = offer != null
+    val priceText = when {
+        offer == null -> tr(fa, "قیمت و پیشنهاد از فروشگاه دریافت نشد", "Price and offer unavailable")
+        offer.hasFreeTrial -> tr(
+            fa,
+            (offer.trialPeriod?.let { describeBillingPeriod(it, true) } ?: "دوره آزمایشی") +
+                " رایگان، سپس " + offer.recurringPrice + " / " + describeBillingPeriod(offer.recurringPeriod, true),
+            (offer.trialPeriod?.let { describeBillingPeriod(it, false) } ?: "Free trial") +
+                " free, then " + offer.recurringPrice + " / " + describeBillingPeriod(offer.recurringPeriod, false)
         )
+        else -> offer.recurringPrice + " / " + describeBillingPeriod(offer.recurringPeriod, fa)
+    }
+    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = SurfaceBase),
+        shape = RoundedCornerShape(21.dp)) {
+        Column(Modifier.padding(17.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(name, color = TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold)
+                    Text(subtitle, color = TextSecondary, fontSize = 11.sp)
+                }
+                StatusBadge(badge, if (offer?.hasFreeTrial == true) ColorSuccess else BrandBlue)
+            }
+            Text(priceText, color = if (offer?.hasFreeTrial == true) ColorSuccess else TextPrimary,
+                fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text(
+                tr(fa,
+                    "خرید فقط وقتی فعال است که پیشنهاد معتبر Google Play و اعتبارسنجی امن سرور در دسترس باشند.",
+                    "Purchase is enabled only when a valid Google Play offer and secure server verification are available."),
+                color = TextSecondary, fontSize = 10.sp, lineHeight = 15.sp
+            )
+            Button(onClick = onClick, enabled = available && !entitled && !loading,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = BrandBlue),
+                shape = RoundedCornerShape(13.dp)) {
+                Text(when {
+                    entitled -> tr(fa, "عضویت فعال است", "Membership active")
+                    loading -> tr(fa, "در حال بررسی…", "Verifying…")
+                    offer?.hasFreeTrial == true -> tr(fa, "شروع دوره آزمایشی", "Start free trial")
+                    available -> tr(fa, "ادامه با Google Play", "Continue with Google Play")
+                    else -> tr(fa, "فعلاً در دسترس نیست", "Not available")
+                })
+            }
+        }
+    }
+}
+
+private fun describeBillingPeriod(value: String, fa: Boolean): String {
+    val match = Regex("^P([0-9]+)(D|W|M|Y)$").matchEntire(value) ?: return value
+    val amount = match.groupValues[1].toIntOrNull() ?: return value
+    return when (match.groupValues[2]) {
+        "D" -> if (fa) amount.toString() + " روز" else amount.toString() + if (amount == 1) " day" else " days"
+        "W" -> if (fa) amount.toString() + " هفته" else amount.toString() + if (amount == 1) " week" else " weeks"
+        "M" -> if (fa) amount.toString() + " ماه" else amount.toString() + if (amount == 1) " month" else " months"
+        "Y" -> if (fa) amount.toString() + " سال" else amount.toString() + if (amount == 1) " year" else " years"
+        else -> value
     }
 }
 
@@ -3317,6 +3386,7 @@ private fun PlanCard(
     badge: String,
     highlighted: Boolean,
     features: List<String>,
+    enabled: Boolean = true,
     onSelect: () -> Unit
 ) {
     Card(
@@ -3354,6 +3424,7 @@ private fun PlanCard(
                 onClick = onSelect,
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(13.dp),
+                enabled = enabled,
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = if (highlighted) BrandTeal else TextSecondary)
             ) {
                 Text(
