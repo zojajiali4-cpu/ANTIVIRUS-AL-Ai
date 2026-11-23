@@ -69,3 +69,10 @@ The repository changes do not create Play Console products, grant service-accoun
 ### Testing
 
 npm test includes mocked Google OAuth/Publisher API responses for trial and non-trial entitlement, canceled/expired/pending/on-hold states, product mismatch, acknowledgement and missing-configuration fail-closed behavior. No real purchase token or Google service-account credential is used by tests.
+
+
+## Checkout readiness gate
+
+Before the app enables a purchase button, `GET /v1/billing/status` authenticates the configured Android Publisher service account and reads the subscription product. It reports only the configured monthly/annual base plans whose Google Play state is ACTIVE. If the product is missing, the service account is absent/invalid, or Google does not confirm active base plans, the app keeps checkout disabled. The user's regional offer and free-trial eligibility are still determined independently by the Play Billing product-details query for the current Play account.
+
+The readiness endpoint is diagnostic only; it does not create a product, activate a base plan, enable a country, or prove that a real checkout has completed.
