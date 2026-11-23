@@ -20,13 +20,21 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+data class PlayPricePhase(
+    val formattedPrice: String,
+    val billingPeriod: String,
+    val billingCycleCount: Int,
+    val isFreeTrial: Boolean
+)
+
 data class PlayPlanOffer(
     val basePlanId: String,
     val offerToken: String,
     val hasFreeTrial: Boolean,
     val trialPeriod: String?,
     val recurringPrice: String,
-    val recurringPeriod: String
+    val recurringPeriod: String,
+    val pricePhases: List<PlayPricePhase>
 )
 
 data class PlayBillingUiState(
@@ -34,6 +42,7 @@ data class PlayBillingUiState(
     val loading: Boolean = false,
     val offers: List<PlayPlanOffer> = emptyList(),
     val checkoutReady: Boolean = false,
+    val purchaseInventoryLoaded: Boolean = false,
     val entitled: Boolean = false,
     val isTrial: Boolean = false,
     val currentBasePlanId: String? = null,
@@ -54,6 +63,9 @@ class PlayBillingManager(
     private var activeBasePlans: Set<String> = emptySet()
     private var billingStatusLoaded = false
     private var billingStatusError: String? = null
+    private var purchaseInventoryLoaded = false
+    private var pendingPurchaseFound = false
+    private var purchaseVerificationFailed = false
     private val billingClient = BillingClient.newBuilder(context.applicationContext)
         .setListener(this)
         .enablePendingPurchases(PendingPurchasesParams.newBuilder().enableOneTimeProducts().build())
@@ -88,6 +100,9 @@ class PlayBillingManager(
         billingStatusLoaded = false
         activeBasePlans = emptySet()
         queriedCatalogOffers = emptyList()
+        purchaseInventoryLoaded = false
+        pendingPurchaseFound = false
+        purchaseVerificationFailed = false
         publish(uiState.copy(loading = true, checkoutReady = false, offers = emptyList(), message = null))
         queryBillingStatus()
         queryCatalog()
@@ -96,7 +111,10 @@ class PlayBillingManager(
 
     fun restorePurchases() {
         if (closed) return
-        publish(uiState.copy(loading = true, message = null))
+        purchaseInventoryLoaded = false
+        pendingPurchaseFound = false
+        purchaseVerificationFailed = false
+        publish(uiState.copy(loading = true, checkoutReady = false, message = null))
         queryOwnedPurchases(showRestoreMessage = true)
     }
 
@@ -196,7 +214,9 @@ class PlayBillingManager(
         val activeOffers = if (billingStatusLoaded) {
             queriedCatalogOffers.filter { it.basePlanId in activeBasePlans }
         } else emptyList()
-        val ready = billingStatusLoaded && billingClient.isReady && activeBasePlans.isNotEmpty()
+        val ready = billingStatusLoaded && billingClient.isReady &&
+            activeBasePlans.isNotEmpty() && purchaseInventoryLoaded &&
+            processingTokens.isEmpty() && !pendingPurchaseFound && !purchaseVerificationFailed
         publish(uiState.copy(
             connected = billingClient.isReady,
             loading = false,
@@ -204,6 +224,10 @@ class PlayBillingManager(
             checkoutReady = ready,
             message = when {
                 !billingStatusLoaded -> "Checking secure billing configuration…"
+                !purchaseInventoryLoaded -> "Checking existing Google Play subscriptions…"
+                processingTokens.isNotEmpty() -> "Verifying your existing subscription securely…"
+                pendingPurchaseFound -> "A Google Play payment is pending. Premium purchase remains locked."
+                purchaseVerificationFailed -> "An existing Play purchase could not be verified. Restore purchases after service recovery; new checkout remains disabled."
                 !ready -> billingStatusError ?: "No active regional subscription plans are configured."
                 activeOffers.isEmpty() -> "No eligible subscription offers are currently available for this Play account or region."
                 else -> null
@@ -241,14 +265,25 @@ class PlayBillingManager(
     private fun toPlanOffer(details: ProductDetails.SubscriptionOfferDetails): PlayPlanOffer? {
         val phases = details.pricingPhases.pricingPhaseList
         val paid = phases.lastOrNull { it.priceAmountMicros > 0L } ?: return null
-        val trial = phases.firstOrNull { it.priceAmountMicros == 0L && it.billingCycleCount > 0 }
+        val trial = phases.firstOrNull {
+            it.priceAmountMicros == 0L && it.billingCycleCount > 0
+        }
+        val pricePhases = phases.map { phase ->
+            PlayPricePhase(
+                formattedPrice = phase.formattedPrice,
+                billingPeriod = phase.billingPeriod,
+                billingCycleCount = phase.billingCycleCount,
+                isFreeTrial = phase.priceAmountMicros == 0L && phase.billingCycleCount > 0
+            )
+        }
         return PlayPlanOffer(
             basePlanId = details.basePlanId,
             offerToken = details.offerToken,
             hasFreeTrial = trial != null,
             trialPeriod = trial?.billingPeriod,
             recurringPrice = paid.formattedPrice,
-            recurringPeriod = paid.billingPeriod
+            recurringPeriod = paid.billingPeriod,
+            pricePhases = pricePhases
         )
     }
 
@@ -270,6 +305,8 @@ class PlayBillingManager(
                 return@queryPurchasesAsync
             }
             val owned = purchases.filter { BuildConfig.ALAI_SUBSCRIPTION_PRODUCT_ID in it.products }
+            purchaseInventoryLoaded = true
+            pendingPurchaseFound = owned.any { it.purchaseState == Purchase.PurchaseState.PENDING }
             if (owned.isEmpty()) {
                 publish(uiState.copy(
                     loading = false, entitled = false, isTrial = false,
@@ -278,17 +315,25 @@ class PlayBillingManager(
                         "No active ANTIVIRUS AL AI subscription was found for this Play account."
                     } else uiState.message
                 ))
-            } else owned.forEach(::processPurchase)
+            } else {
+                publishAvailableOffers()
+                owned.forEach(::processPurchase)
+            }
+            publishAvailableOffers()
         }
     }
 
     private fun processPurchase(purchase: Purchase) {
         if (BuildConfig.ALAI_SUBSCRIPTION_PRODUCT_ID !in purchase.products) return
         when (purchase.purchaseState) {
-            Purchase.PurchaseState.PENDING -> publish(uiState.copy(
-                loading = false, entitled = false,
-                message = "Payment is pending. Premium access stays locked until Google Play confirms it."
-            ))
+            Purchase.PurchaseState.PENDING -> {
+                pendingPurchaseFound = true
+                publish(uiState.copy(
+                    loading = false, entitled = false, checkoutReady = false,
+                    message = "Payment is pending. Premium access stays locked until Google Play confirms it."
+                ))
+                publishAvailableOffers()
+            }
             Purchase.PurchaseState.PURCHASED -> {
                 val token = purchase.purchaseToken
                 if (!processingTokens.add(token)) return
@@ -312,12 +357,16 @@ class PlayBillingManager(
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (error: Exception) {
+                        purchaseVerificationFailed = true
                         publish(uiState.copy(
-                            loading = false, entitled = false, isTrial = false,
+                            loading = false, entitled = false, checkoutReady = false, isTrial = false,
                             currentBasePlanId = null, expiresAtEpochMillis = null,
                             message = error.message ?: "Secure purchase verification is unavailable. Restore purchases to retry."
                         ))
-                    } finally { processingTokens.remove(token) }
+                    } finally {
+                        processingTokens.remove(token)
+                        publishAvailableOffers()
+                    }
                 }
             }
         }

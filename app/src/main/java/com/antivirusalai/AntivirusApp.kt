@@ -3324,14 +3324,18 @@ private fun BillingPlanCard(
     val available = offer != null
     val priceText = when {
         offer == null -> tr(fa, "قیمت و پیشنهاد از فروشگاه دریافت نشد", "Price and offer unavailable")
-        offer.hasFreeTrial -> tr(
-            fa,
-            (offer.trialPeriod?.let { describeBillingPeriod(it, true) } ?: "دوره آزمایشی") +
-                " رایگان، سپس " + offer.recurringPrice + " / " + describeBillingPeriod(offer.recurringPeriod, true),
-            (offer.trialPeriod?.let { describeBillingPeriod(it, false) } ?: "Free trial") +
-                " free, then " + offer.recurringPrice + " / " + describeBillingPeriod(offer.recurringPeriod, false)
-        )
-        else -> offer.recurringPrice + " / " + describeBillingPeriod(offer.recurringPeriod, fa)
+        else -> offer.pricePhases.joinToString(" → ") { phase ->
+            val period = describeBillingPeriod(phase.billingPeriod, fa)
+            when {
+                phase.isFreeTrial -> tr(fa, period + " رایگان", period + " free")
+                phase.billingCycleCount > 0 -> tr(
+                    fa,
+                    phase.formattedPrice + " برای " + phase.billingCycleCount + " دوره " + period,
+                    phase.formattedPrice + " for " + phase.billingCycleCount + " " + period
+                )
+                else -> phase.formattedPrice + " / " + period
+            }
+        }
     }
     Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = SurfaceBase),
         shape = RoundedCornerShape(21.dp)) {

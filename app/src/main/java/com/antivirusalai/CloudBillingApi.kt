@@ -41,23 +41,7 @@ object CloudBillingApi {
             if (status !in 200..299) {
                 throw IllegalStateException("Secure billing readiness check is unavailable.")
             }
-            val root = JSONObject(responseText)
-            if (!root.optBoolean("ok", false)) {
-                throw IllegalStateException("Secure billing readiness check returned an invalid response.")
-            }
-            val allowedPlans = setOf("monthly", "annual")
-            val values = root.optJSONArray("activeBasePlans")
-            val activePlans = buildSet {
-                if (values != null) {
-                    for (index in 0 until values.length()) {
-                        values.optString(index).takeIf { it in allowedPlans }?.let(::add)
-                    }
-                }
-            }
-            CloudBillingStatus(
-                checkoutReady = root.optBoolean("checkoutReady", false) && activePlans.isNotEmpty(),
-                activeBasePlans = activePlans
-            )
+            parseBillingStatusPayload(responseText)
         } finally {
             connection.disconnect()
         }
@@ -113,15 +97,50 @@ object CloudBillingApi {
                 "The verified subscription base plan is not supported."
             }
             require(expiresAt > 0L) { "The verified subscription expiry is missing." }
+            val verifiedProductId = root.optString("productId", "")
+            require(verifiedProductId == productId) {
+                "The verified purchase belongs to a different subscription product."
+            }
+            val stateAllowsAccess = state in setOf(
+                "SUBSCRIPTION_STATE_ACTIVE",
+                "SUBSCRIPTION_STATE_IN_GRACE_PERIOD",
+                "SUBSCRIPTION_STATE_CANCELED"
+            )
+            val isCurrentlyEntitled = root.optBoolean("entitled", false) &&
+                stateAllowsAccess && expiresAt > System.currentTimeMillis()
             CloudSubscriptionEntitlement(
-                entitled = root.optBoolean("entitled", false) && expiresAt > System.currentTimeMillis(),
+                entitled = isCurrentlyEntitled,
                 subscriptionState = state,
-                productId = root.optString("productId", ""),
+                productId = verifiedProductId,
                 basePlanId = basePlanId,
-                isTrial = root.optBoolean("isTrial", false),
+                isTrial = root.optBoolean("isTrial", false) && isCurrentlyEntitled,
                 expiresAtEpochMillis = expiresAt
             )
         } finally { connection.disconnect() }
+    }
+
+    internal fun parseBillingStatusPayload(responseText: String): CloudBillingStatus {
+        val root = JSONObject(responseText)
+        require(root.optBoolean("ok", false)) {
+            "Secure billing readiness check returned an invalid response."
+        }
+        val allowedPlans = setOf("monthly", "annual")
+        val values = root.optJSONArray("activeBasePlans")
+        val activePlans = buildSet {
+            if (values != null) {
+                for (index in 0 until values.length()) {
+                    values.optString(index).takeIf { it in allowedPlans }?.let(::add)
+                }
+            }
+        }
+        val productMatches = root.optString("productId", "") ==
+            BuildConfig.ALAI_SUBSCRIPTION_PRODUCT_ID
+        val checkoutReady = root.optBoolean("checkoutReady", false) &&
+            productMatches && activePlans.isNotEmpty()
+        return CloudBillingStatus(
+            checkoutReady = checkoutReady,
+            activeBasePlans = if (checkoutReady) activePlans else emptySet()
+        )
     }
 
     internal fun validatePurchaseToken(value: String): String {
