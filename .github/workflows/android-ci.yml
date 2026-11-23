@@ -187,7 +187,7 @@ jobs:
 
           "$ADB" start-server
           "$EMULATOR" -avd "$AVD_NAME" -port 5554 -no-window -gpu swiftshader_indirect \
-            -noaudio -no-boot-anim -no-snapshot -wipe-data -accel off >"$EMULATOR_LOG" 2>&1 &
+            -noaudio -no-boot-anim -no-snapshot -wipe-data -accel auto >"$EMULATOR_LOG" 2>&1 &
           EMULATOR_PID=$!
 
           cleanup() {
@@ -207,7 +207,10 @@ jobs:
           }
           trap cleanup EXIT
 
-          "$ADB" -s emulator-5554 wait-for-device
+          if ! timeout 180s "$ADB" -s emulator-5554 wait-for-device; then
+            echo "::error::ADB did not detect emulator API $API_LEVEL within 3 minutes; inspect emulator diagnostics above."
+            exit 1
+          fi
           booted=false
           for attempt in $(seq 1 240); do
             if [[ "$("$ADB" -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)" == "1" ]]; then
