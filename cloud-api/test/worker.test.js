@@ -16,6 +16,7 @@ function makeD1({ fail = false } = {}) {
   const counters = new Map();
   const feeds = new Map();
   const statements = [];
+  const billingVerifications = new Map();
   return {
     statements,
     prepare(sql) {
@@ -39,6 +40,12 @@ function makeD1({ fail = false } = {}) {
           counters.set(key, (counters.get(key) || 0) + 1);
         } else if (sql.startsWith("INSERT INTO signed_feeds")) {
           feeds.set(params[0], { version: params[0], issued_at: params[1], expires_at: params[2], payload: params[3] });
+        } else if (sql.startsWith("INSERT INTO play_billing_verifications")) {
+          billingVerifications.set(params[0], {
+            token_hash: params[0], product_id: params[1], base_plan_id: params[2],
+            subscription_state: params[3], expires_at: params[4], is_trial: params[5],
+            created_at: params[6], updated_at: params[7]
+          });
         }
         return { success: true };
       };
@@ -274,4 +281,222 @@ test("CORS preflight reflects only an explicitly allowed origin", async () => {
   }), { CORS_ALLOWED_ORIGINS: "https://app.example.test" });
   assert.equal(denied.status, 204);
   assert.equal(denied.headers.get("access-control-allow-origin"), null);
+});
+
+
+const { privateKey: playServicePrivateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+const playServiceAccount = JSON.stringify({
+  type: "service_account",
+  client_email: "alai-billing@test-project.iam.gserviceaccount.com",
+  private_key_id: "test-key-id",
+  private_key: playServicePrivateKey.export({ type: "pkcs8", format: "pem" })
+});
+function playBillingEnvironment(db = makeD1()) {
+  return {
+    DB: db, RATE_SALT,
+    PLAY_PACKAGE_NAME: "com.antivirusalai",
+    PLAY_SUBSCRIPTION_PRODUCT_ID: "alai_plus",
+    PLAY_SUBSCRIPTION_BASE_PLANS: "monthly,annual",
+    PLAY_SERVICE_ACCOUNT_JSON: playServiceAccount
+  };
+}
+async function withPlayApi(purchase, callback, { failAck = false, status = 200 } = {}) {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    calls.push({ url, method: init.method || "GET" });
+    if (url === "https://oauth2.googleapis.com/token") {
+      return new Response(JSON.stringify({ access_token: "test-play-access-token", expires_in: 3600 }), {
+        status: 200, headers: { "content-type": "application/json" }
+      });
+    }
+    if (url.includes(":acknowledge")) {
+      return new Response(failAck ? JSON.stringify({ error: "ack failed" }) : "{}", {
+        status: failAck ? 503 : 200, headers: { "content-type": "application/json" }
+      });
+    }
+    if (url.includes("/purchases/subscriptionsv2/tokens/")) {
+      return new Response(status === 200 ? JSON.stringify(purchase || {}) : "{}", {
+        status, headers: { "content-type": "application/json" }
+      });
+    }
+    throw new Error("Unexpected test URL");
+  };
+  try { return await callback(calls); }
+  finally { globalThis.fetch = originalFetch; }
+}
+function subscriptionFixture(overrides = {}) {
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  return {
+    subscriptionState: "SUBSCRIPTION_STATE_ACTIVE",
+    acknowledgementState: "ACKNOWLEDGEMENT_STATE_PENDING",
+    lineItems: [{
+      productId: "alai_plus",
+      expiryTime: expiresAt,
+      offerDetails: { basePlanId: "monthly", offerId: "trial-7d" },
+      offerPhase: { freeTrial: {} }
+    }],
+    ...overrides
+  };
+}
+
+test("Play subscription verification fails closed when server credentials are absent", async () => {
+  const response = await worker.fetch(
+    request("/v1/billing/subscription/verify", {
+      productId: "alai_plus", purchaseToken: "play-token-123456789012345"
+    }),
+    { DB: makeD1(), RATE_SALT }
+  );
+  assert.equal(response.status, 503);
+  assert.equal((await json(response)).error, "BILLING_NOT_CONFIGURED");
+});
+
+test("Play subscription verification rejects product IDs outside the configured product", async () => {
+  const response = await worker.fetch(
+    request("/v1/billing/subscription/verify", {
+      productId: "attacker_product", purchaseToken: "play-token-123456789012345"
+    }),
+    playBillingEnvironment()
+  );
+  assert.equal(response.status, 400);
+  assert.equal((await json(response)).error, "PRODUCT_NOT_ALLOWED");
+});
+
+test("Play subscription verification validates with Google, acknowledges, and stores only a token digest", async () => {
+  const db = makeD1(), env = playBillingEnvironment(db);
+  const purchaseToken = "play-token-123456789012345";
+  await withPlayApi(subscriptionFixture(), async calls => {
+    const response = await worker.fetch(
+      request("/v1/billing/subscription/verify", { productId: "alai_plus", purchaseToken }),
+      env
+    );
+    assert.equal(response.status, 200);
+    const result = await json(response);
+    assert.equal(result.ok, true);
+    assert.equal(result.entitled, true);
+    assert.equal(result.isTrial, true);
+    assert.equal(result.basePlanId, "monthly");
+    assert.equal(result.acknowledgementState, "ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED");
+    assert.ok(calls.some(call => call.method === "POST" && call.url.includes(":acknowledge")));
+  });
+  const insert = db.statements.find(item => item.sql.startsWith("INSERT INTO play_billing_verifications"));
+  assert.ok(insert);
+  assert.notEqual(insert.params[0], purchaseToken);
+  assert.equal(insert.params.includes(purchaseToken), false);
+  assert.match(insert.params[0], /^[a-f0-9]{64}$/);
+});
+
+test("Play subscription verification refuses unconfigured base plans", async () => {
+  const env = playBillingEnvironment();
+  env.PLAY_SUBSCRIPTION_BASE_PLANS = "";
+  const response = await worker.fetch(
+    request("/v1/billing/subscription/verify", {
+      productId: "alai_plus", purchaseToken: "play-token-123456789012345"
+    }),
+    env
+  );
+  assert.equal(response.status, 503);
+  assert.equal((await json(response)).error, "BILLING_NOT_CONFIGURED");
+});
+
+test("Play subscription verification never grants access to an expired subscription", async () => {
+  const expired = subscriptionFixture({
+    acknowledgementState: "ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED",
+    lineItems: [{
+      productId: "alai_plus",
+      expiryTime: new Date(Date.now() - 60_000).toISOString(),
+      offerDetails: { basePlanId: "monthly" },
+      offerPhase: { freeTrial: {} }
+    }]
+  });
+  await withPlayApi(expired, async () => {
+    const response = await worker.fetch(
+      request("/v1/billing/subscription/verify", {
+        productId: "alai_plus", purchaseToken: "play-token-expired-123456789"
+      }),
+      playBillingEnvironment()
+    );
+    assert.equal(response.status, 200);
+    assert.equal((await json(response)).entitled, false);
+  });
+});
+
+test("Play subscription verification accepts canceled subscriptions only until their expiry", async () => {
+  const canceled = subscriptionFixture({
+    subscriptionState: "SUBSCRIPTION_STATE_CANCELED",
+    acknowledgementState: "ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED"
+  });
+  await withPlayApi(canceled, async () => {
+    const response = await worker.fetch(
+      request("/v1/billing/subscription/verify", {
+        productId: "alai_plus", purchaseToken: "play-token-canceled-123456789"
+      }),
+      playBillingEnvironment()
+    );
+    assert.equal(response.status, 200);
+    assert.equal((await json(response)).entitled, true);
+  });
+});
+
+test("Play subscription verification does not grant access to pending, on-hold, or paused subscriptions", async () => {
+  for (const state of ["SUBSCRIPTION_STATE_PENDING", "SUBSCRIPTION_STATE_ON_HOLD", "SUBSCRIPTION_STATE_PAUSED"]) {
+    const fixture = subscriptionFixture({ subscriptionState: state });
+    await withPlayApi(fixture, async () => {
+      const response = await worker.fetch(
+        request("/v1/billing/subscription/verify", {
+          productId: "alai_plus", purchaseToken: "play-token-" + state.toLowerCase() + "-123456789"
+        }),
+        playBillingEnvironment()
+      );
+      assert.equal(response.status, 200);
+      assert.equal((await json(response)).entitled, false);
+    });
+  }
+});
+
+test("Play subscription verification rejects a Google purchase for another product", async () => {
+  const mismatch = subscriptionFixture({
+    lineItems: [{
+      productId: "other_product",
+      expiryTime: new Date(Date.now() + 60_000).toISOString(),
+      offerDetails: { basePlanId: "monthly" }
+    }]
+  });
+  await withPlayApi(mismatch, async () => {
+    const response = await worker.fetch(
+      request("/v1/billing/subscription/verify", {
+        productId: "alai_plus", purchaseToken: "play-token-wrongproduct-123456"
+      }),
+      playBillingEnvironment()
+    );
+    assert.equal(response.status, 400);
+    assert.equal((await json(response)).error, "PURCHASE_PRODUCT_MISMATCH");
+  });
+});
+
+test("Play subscription verification fails closed when Google acknowledgement fails", async () => {
+  await withPlayApi(subscriptionFixture(), async () => {
+    const response = await worker.fetch(
+      request("/v1/billing/subscription/verify", {
+        productId: "alai_plus", purchaseToken: "play-token-ackfailure-123456789"
+      }),
+      playBillingEnvironment()
+    );
+    assert.equal(response.status, 503);
+    assert.equal((await json(response)).error, "PURCHASE_ACKNOWLEDGEMENT_PENDING");
+  }, { failAck: true });
+});
+
+test("Play subscription verification maps unknown Google purchase tokens to an invalid purchase", async () => {
+  await withPlayApi({}, async () => {
+    const response = await worker.fetch(
+      request("/v1/billing/subscription/verify", {
+        productId: "alai_plus", purchaseToken: "play-token-notfound-123456789"
+      }),
+      playBillingEnvironment()
+    );
+    assert.equal(response.status, 400);
+    assert.equal((await json(response)).error, "INVALID_PURCHASE_TOKEN");
+  }, { status: 404 });
 });

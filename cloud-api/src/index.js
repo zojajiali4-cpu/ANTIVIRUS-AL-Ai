@@ -141,6 +141,206 @@ async function verifyPublishedFeed(payloadText,env,now){
  return {version,issuedAt:issued,expiresAt:expires};
 }
 
+
+
+const PLAY_PUBLISHER_SCOPE = "https://www.googleapis.com/auth/androidpublisher";
+const PLAY_OAUTH_URL = "https://oauth2.googleapis.com/token";
+const PLAY_API_ROOT = "https://androidpublisher.googleapis.com/androidpublisher/v3";
+let cachedPlayAccessToken = null;
+
+function base64UrlBytes(bytes) {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function base64UrlJson(value) {
+  return base64UrlBytes(new TextEncoder().encode(JSON.stringify(value)));
+}
+
+function pemPkcs8Bytes(pem) {
+  if (typeof pem !== "string" || !pem.includes("-----BEGIN PRIVATE KEY-----")) {
+    throw Error("PLAY_SERVICE_ACCOUNT_INVALID");
+  }
+  const encoded = pem.replace("-----BEGIN PRIVATE KEY-----", "")
+    .replace("-----END PRIVATE KEY-----", "").replace(/\s+/g, "");
+  let binary;
+  try { binary = atob(encoded); } catch { throw Error("PLAY_SERVICE_ACCOUNT_INVALID"); }
+  if (binary.length < 64 || binary.length > 16_384) throw Error("PLAY_SERVICE_ACCOUNT_INVALID");
+  return Uint8Array.from(binary, character => character.charCodeAt(0));
+}
+
+async function getPlayPublisherAccessToken(env, nowSeconds) {
+  if (typeof env.PLAY_SERVICE_ACCOUNT_JSON !== "string" ||
+      env.PLAY_SERVICE_ACCOUNT_JSON.length > 32_768) {
+    throw Error("PLAY_BILLING_NOT_CONFIGURED");
+  }
+
+  let account;
+  try { account = JSON.parse(env.PLAY_SERVICE_ACCOUNT_JSON); }
+  catch { throw Error("PLAY_SERVICE_ACCOUNT_INVALID"); }
+
+  const email = typeof account.client_email === "string" ? account.client_email : "";
+  if (!/^[^@\s]+@[^@\s]+\.iam\.gserviceaccount\.com$/.test(email)) {
+    throw Error("PLAY_SERVICE_ACCOUNT_INVALID");
+  }
+  const cacheKey = email + "|" + account.private_key_id;
+  if (cachedPlayAccessToken?.cacheKey === cacheKey &&
+      cachedPlayAccessToken.expiresAt > nowSeconds + 60) {
+    return cachedPlayAccessToken.token;
+  }
+
+  let signingKey;
+  try {
+    signingKey = await crypto.subtle.importKey(
+      "pkcs8", pemPkcs8Bytes(account.private_key),
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["sign"]
+    );
+  } catch {
+    throw Error("PLAY_SERVICE_ACCOUNT_INVALID");
+  }
+
+  const header = { alg: "RS256", typ: "JWT" };
+  if (typeof account.private_key_id === "string" && account.private_key_id.length <= 256) {
+    header.kid = account.private_key_id;
+  }
+  const claims = {
+    iss: email, scope: PLAY_PUBLISHER_SCOPE, aud: PLAY_OAUTH_URL,
+    iat: nowSeconds, exp: nowSeconds + 3600
+  };
+  const unsigned = base64UrlJson(header) + "." + base64UrlJson(claims);
+  const signature = await crypto.subtle.sign(
+    "RSASSA-PKCS1-v1_5", signingKey, new TextEncoder().encode(unsigned)
+  );
+  const assertion = unsigned + "." + base64UrlBytes(new Uint8Array(signature));
+
+  let response;
+  try {
+    response = await fetch(PLAY_OAUTH_URL, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion
+      })
+    });
+  } catch {
+    throw Error("PLAY_GOOGLE_API_UNAVAILABLE");
+  }
+  if (!response.ok) throw Error("PLAY_GOOGLE_API_UNAVAILABLE");
+
+  let result;
+  try { result = await response.json(); }
+  catch { throw Error("PLAY_GOOGLE_API_UNAVAILABLE"); }
+  const token = typeof result.access_token === "string" ? result.access_token : "";
+  const expiresIn = Number(result.expires_in);
+  if (!token || token.length > 8_192 || !Number.isFinite(expiresIn) || expiresIn < 60) {
+    throw Error("PLAY_GOOGLE_API_UNAVAILABLE");
+  }
+  cachedPlayAccessToken = {
+    cacheKey, token, expiresAt: nowSeconds + Math.min(expiresIn, 3600)
+  };
+  return token;
+}
+
+async function fetchGoogleSubscriptionPurchase(env, purchaseToken, nowSeconds) {
+  const packageName = env.PLAY_PACKAGE_NAME;
+  const productId = env.PLAY_SUBSCRIPTION_PRODUCT_ID;
+  const basePlans = String(env.PLAY_SUBSCRIPTION_BASE_PLANS || "")
+    .split(",").map(value => value.trim()).filter(Boolean);
+
+  if (packageName !== "com.antivirusalai" ||
+      typeof productId !== "string" ||
+      !/^[a-zA-Z0-9._-]{3,100}$/.test(productId) ||
+      basePlans.length === 0 ||
+      basePlans.some(value => !/^[a-zA-Z0-9._-]{1,100}$/.test(value))) {
+    throw Error("PLAY_BILLING_NOT_CONFIGURED");
+  }
+
+  const accessToken = await getPlayPublisherAccessToken(env, nowSeconds);
+  const encodedPackage = encodeURIComponent(packageName);
+  const encodedToken = encodeURIComponent(purchaseToken);
+  const url = PLAY_API_ROOT + "/applications/" + encodedPackage +
+    "/purchases/subscriptionsv2/tokens/" + encodedToken;
+
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "GET",
+      headers: { authorization: "Bearer " + accessToken, accept: "application/json" }
+    });
+  } catch {
+    throw Error("PLAY_GOOGLE_API_UNAVAILABLE");
+  }
+  if (response.status === 404) throw Error("PLAY_PURCHASE_TOKEN_INVALID");
+  if (!response.ok) throw Error("PLAY_GOOGLE_API_UNAVAILABLE");
+
+  let purchase;
+  try { purchase = await response.json(); }
+  catch { throw Error("PLAY_GOOGLE_API_UNAVAILABLE"); }
+  if (!purchase || !Array.isArray(purchase.lineItems)) {
+    throw Error("PLAY_GOOGLE_API_UNAVAILABLE");
+  }
+
+  const matchingItems = purchase.lineItems.filter(item =>
+    item && item.productId === productId && item.offerDetails &&
+    basePlans.includes(item.offerDetails.basePlanId)
+  );
+  if (matchingItems.length === 0) throw Error("PLAY_PRODUCT_MISMATCH");
+
+  const lineItem = matchingItems
+    .map(item => ({ item, expiryMillis: Date.parse(item.expiryTime || "") }))
+    .filter(value => Number.isFinite(value.expiryMillis))
+    .sort((left, right) => right.expiryMillis - left.expiryMillis)[0]?.item;
+  if (!lineItem) throw Error("PLAY_PURCHASE_NOT_ENTITLED");
+
+  const state = typeof purchase.subscriptionState === "string"
+    ? purchase.subscriptionState : "SUBSCRIPTION_STATE_UNSPECIFIED";
+  const expiryMillis = Date.parse(lineItem.expiryTime || "");
+  const allowedStates = new Set([
+    "SUBSCRIPTION_STATE_ACTIVE",
+    "SUBSCRIPTION_STATE_IN_GRACE_PERIOD",
+    "SUBSCRIPTION_STATE_CANCELED"
+  ]);
+  const entitled = allowedStates.has(state) && expiryMillis > nowSeconds * 1000;
+  const acknowledgementState = typeof purchase.acknowledgementState === "string"
+    ? purchase.acknowledgementState : "ACKNOWLEDGEMENT_STATE_UNSPECIFIED";
+
+  if (entitled && acknowledgementState === "ACKNOWLEDGEMENT_STATE_PENDING") {
+    const ackUrl = PLAY_API_ROOT + "/applications/" + encodedPackage +
+      "/purchases/subscriptions/" + encodeURIComponent(productId) +
+      "/tokens/" + encodedToken + ":acknowledge";
+    let ackResponse;
+    try {
+      ackResponse = await fetch(ackUrl, {
+        method: "POST",
+        headers: {
+          authorization: "Bearer " + accessToken,
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({})
+      });
+    } catch {
+      throw Error("PLAY_ACKNOWLEDGEMENT_FAILED");
+    }
+    if (!ackResponse.ok) throw Error("PLAY_ACKNOWLEDGEMENT_FAILED");
+  }
+
+  return {
+    entitled, state, expiryMillis, productId,
+    basePlanId: lineItem.offerDetails.basePlanId,
+    offerId: typeof lineItem.offerDetails.offerId === "string"
+      ? lineItem.offerDetails.offerId : null,
+    isTrial: !!(lineItem.offerPhase && lineItem.offerPhase.freeTrial),
+    acknowledgementState: entitled && acknowledgementState === "ACKNOWLEDGEMENT_STATE_PENDING"
+      ? "ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED" : acknowledgementState
+  };
+}
+
+async function sha256Hex(value) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("");
+}
+
 export default { async fetch(req,env){
  const u=new URL(req.url), p=u.pathname;
  if(req.method==="OPTIONS"){
@@ -186,6 +386,54 @@ export default { async fetch(req,env){
      return out({error:"REPUTATION_LOOKUP_UNAVAILABLE"},503);
    }
  }
+
+ if(p==="/v1/billing/subscription/verify"&&req.method==="POST"){
+   try {
+     const x=await body(req,16_384);
+     const token=typeof x.purchaseToken==="string"?x.purchaseToken:"";
+     const requestedProduct=typeof x.productId==="string"?x.productId:"";
+     if(token.length<20||token.length>4096||/[\s\x00-\x1f\x7f]/.test(token)) {
+       return out({error:"INVALID_PURCHASE_TOKEN"},400);
+     }
+     if(requestedProduct!==env.PLAY_SUBSCRIPTION_PRODUCT_ID) {
+       return out({error:"PRODUCT_NOT_ALLOWED"},400);
+     }
+     if(!env.PLAY_SERVICE_ACCOUNT_JSON||!env.PLAY_PACKAGE_NAME||!env.PLAY_SUBSCRIPTION_BASE_PLANS) {
+       return out({error:"BILLING_NOT_CONFIGURED"},503);
+     }
+     const nowSeconds=Math.floor(Date.now()/1000);
+     const verified=await fetchGoogleSubscriptionPurchase(env,token,nowSeconds);
+     const tokenHash=await sha256Hex(token);
+     const nowMillis=Date.now();
+     await env.DB.prepare(
+       "INSERT INTO play_billing_verifications(purchase_token_sha256,product_id,base_plan_id,subscription_state,expires_at,is_trial,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(purchase_token_sha256) DO UPDATE SET product_id=excluded.product_id,base_plan_id=excluded.base_plan_id,subscription_state=excluded.subscription_state,expires_at=excluded.expires_at,is_trial=excluded.is_trial,updated_at=excluded.updated_at"
+     ).bind(
+       tokenHash,verified.productId,verified.basePlanId,verified.state,
+       Math.floor(verified.expiryMillis/1000),verified.isTrial?1:0,nowMillis,nowMillis
+     ).run();
+     return out({
+       ok:true, entitled:verified.entitled, subscriptionState:verified.state,
+       productId:verified.productId, basePlanId:verified.basePlanId,
+       offerId:verified.offerId, isTrial:verified.isTrial,
+       expiresAtEpochMillis:verified.expiryMillis,
+       acknowledgementState:verified.acknowledgementState
+     });
+   } catch(error) {
+     const code=error?.message||"";
+     if(code==="BODY_TOO_LARGE"||code==="INVALID_UTF8"||code==="INVALID_JSON") {
+       return out({error:code},400);
+     }
+     if(code==="PLAY_PURCHASE_TOKEN_INVALID") return out({error:"INVALID_PURCHASE_TOKEN"},400);
+     if(code==="PLAY_PRODUCT_MISMATCH") return out({error:"PURCHASE_PRODUCT_MISMATCH"},400);
+     if(code==="PLAY_PURCHASE_NOT_ENTITLED") return out({error:"PURCHASE_NOT_ENTITLED"},200);
+     if(code==="PLAY_BILLING_NOT_CONFIGURED"||code==="PLAY_SERVICE_ACCOUNT_INVALID") {
+       return out({error:"BILLING_NOT_CONFIGURED"},503);
+     }
+     if(code==="PLAY_ACKNOWLEDGEMENT_FAILED") return out({error:"PURCHASE_ACKNOWLEDGEMENT_PENDING"},503);
+     return out({error:"BILLING_VERIFICATION_UNAVAILABLE"},503);
+   }
+ }
+
  if(p==="/v1/threat-feed/latest"&&req.method==="GET"){
    try{
      const r=await env.DB.prepare("SELECT version,expires_at,payload FROM signed_feeds ORDER BY version DESC LIMIT 1").first();

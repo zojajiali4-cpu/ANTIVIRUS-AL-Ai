@@ -35,3 +35,37 @@ Run the dependency-free Worker tests with `npm test` from this directory. GitHub
 ## Deployment status
 
 This repository change does not deploy the Worker, create the D1 database, set secrets, populate reputation data, or prove that a live service exists. Configure and test those operational resources in the account owner’s Cloudflare environment before enabling the cloud feature in a release.
+
+## Google Play subscription verification (trial-first regional model)
+
+The Android app uses one Google Play subscription product, "alai_plus", with two base plans: "monthly" and "annual". Google Play supplies the localized price and only returns offers for which the current Play account is eligible. A free-trial phase is detected from the purchase resource returned by Google; the app does not invent a duration, regional currency, or eligibility decision.
+
+### Cloudflare configuration
+
+The non-secret package/product/base-plan values are declared in wrangler.toml. Set the service-account JSON only as a Cloudflare Worker secret:
+
+```sh
+wrangler secret put PLAY_SERVICE_ACCOUNT_JSON
+```
+
+Use a dedicated Google Play service account with the minimum Android Publisher access required to read and acknowledge subscriptions. Link the service account to the correct Play Console developer account and grant its subscription/order permissions. Do not commit its JSON key, send it in chat, or place it in the APK.
+
+Apply the D1 migration before enabling the endpoint:
+
+```sh
+wrangler d1 migrations apply antivirus-al-ai-threat-intel --remote
+```
+
+The endpoint POST /v1/billing/subscription/verify accepts only a Google Play purchase token and the configured product ID. It verifies the token with purchases.subscriptionsv2.get, checks the package, product, configured base plan, state and expiry, acknowledges a verified unacknowledged purchase, and returns a minimal entitlement result. It stores only a SHA-256 digest of the purchase token; the raw token is never persisted or logged. The route fails closed when service-account credentials, D1, rate limiting or Google verification are unavailable.
+
+Entitlement rules: ACTIVE and IN_GRACE_PERIOD subscriptions are entitled; CANCELED subscriptions remain entitled only until their verified expiry; PENDING, ON_HOLD, PAUSED and EXPIRED subscriptions are not entitled. A purchase must be verified by Google before access is granted. Client-side UI state is not proof of purchase.
+
+### Play Console product configuration
+
+Create subscription product ID "alai_plus" with auto-renewing base plans "monthly" and "annual". Configure the trial offer phases and eligible countries/regions for each base plan in Play Console. Price and currency are supplied by Google Play for the buyer's account country; do not hardcode currency or show a trial duration unless an eligible offer is returned. Keep unavailable markets disabled until merchant, tax, payout, policy and support readiness are confirmed.
+
+The repository changes do not create Play Console products, grant service-account permissions, deploy the Worker, apply the D1 migration, set secrets, or initiate real charges. Until these operational steps are complete, the store must remain clearly marked as unavailable and must not imply that an active trial or payment can be started.
+
+### Testing
+
+npm test includes mocked Google OAuth/Publisher API responses for trial and non-trial entitlement, canceled/expired/pending/on-hold states, product mismatch, acknowledgement and missing-configuration fail-closed behavior. No real purchase token or Google service-account credential is used by tests.
