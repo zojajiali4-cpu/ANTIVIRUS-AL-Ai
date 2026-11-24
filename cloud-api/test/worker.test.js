@@ -379,11 +379,12 @@ async function withPlayApi(purchase, callback, {
   finally { globalThis.fetch = originalFetch; }
 }
 
+let bazaarTestClientCounter = 0;
 function bazaarBillingEnvironment(db = makeD1()) {
   return {
     DB: db, RATE_SALT, PLUS_ENTITLEMENT_HMAC_SECRET,
     BAZAAR_PACKAGE_NAME: "com.antivirusalai",
-    BAZAAR_CLIENT_ID: "bazaar-test-client",
+    BAZAAR_CLIENT_ID: "bazaar-test-client-" + (++bazaarTestClientCounter),
     BAZAAR_CLIENT_SECRET: "bazaar-test-client-secret",
     BAZAAR_REFRESH_TOKEN: "bazaar-test-refresh-token",
     BAZAAR_MONTHLY_PRODUCT_ID: "alai_plus_monthly",
@@ -392,9 +393,7 @@ function bazaarBillingEnvironment(db = makeD1()) {
 }
 async function withBazaarApi(subscription, callback, { oauthStatus = 200, subscriptionStatus = 200 } = {}) {
   const originalFetch = globalThis.fetch;
-  const previousCache = cachedBazaarAccessToken;
   const calls = [];
-  cachedBazaarAccessToken = null;
   globalThis.fetch = async (input, init = {}) => {
     const url = String(input);
     calls.push({ url, method: init.method || "GET", body: init.body?.toString?.() || "" });
@@ -412,7 +411,7 @@ async function withBazaarApi(subscription, callback, { oauthStatus = 200, subscr
     throw new Error("Unexpected Cafe Bazaar API request: " + url);
   };
   try { return await callback(calls); }
-  finally { globalThis.fetch = originalFetch; cachedBazaarAccessToken = previousCache; }
+  finally { globalThis.fetch = originalFetch; }
 }
 function bazaarSubscriptionFixture(overrides = {}) {
   return {

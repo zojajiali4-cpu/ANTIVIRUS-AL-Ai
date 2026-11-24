@@ -134,6 +134,15 @@ private enum class MainTab(val key: String) {
     VAULT("vault")
 }
 
+private fun findComponentActivity(context: android.content.Context): androidx.activity.ComponentActivity? {
+    var current: android.content.Context? = context
+    while (current != null) {
+        if (current is androidx.activity.ComponentActivity) return current
+        current = (current as? android.content.ContextWrapper)?.baseContext
+    }
+    return null
+}
+
 private enum class AppInventoryConsentAction {
     DEVICE_SCAN,
     PROTECTION,
@@ -144,15 +153,17 @@ private enum class AppInventoryConsentAction {
 fun AntivirusApp(inPictureInPicture: Boolean = false) {
     val context = LocalContext.current
     var billingUiState by remember { mutableStateOf(BazaarBillingUiState()) }
-    val billingActivity = context as? androidx.activity.ComponentActivity
+    val billingActivity = findComponentActivity(context)
     val billingManager = remember(billingActivity) {
         billingActivity?.let { activity ->
             BazaarBillingManager(context, activity.activityResultRegistry) { state -> billingUiState = state }
         }
     }
     DisposableEffect(billingManager) {
-        billingManager?.connect()
         onDispose { billingManager?.close() }
+    }
+    LaunchedEffect(activeTab) {
+        if (activeTab == MainTab.STORE.key) billingManager?.connect()
     }
     val scope = rememberCoroutineScope()
     val workManager = remember(context) { WorkManager.getInstance(context.applicationContext) }

@@ -402,15 +402,18 @@ function configuredBazaarProducts(env) {
 }
 
 function isConfiguredPlusPlan(env, productId, basePlanId) {
-  try {
-    return configuredBazaarProducts(env).some(item =>
-      item.productId === productId && item.basePlanId === basePlanId
-    );
-  } catch {
-    const playPlans = String(env.PLAY_SUBSCRIPTION_BASE_PLANS || "")
-      .split(",").map(value => value.trim()).filter(Boolean);
-    return productId === env.PLAY_SUBSCRIPTION_PRODUCT_ID && playPlans.includes(basePlanId);
+  const bazaarKeysPresent = ["BAZAAR_PACKAGE_NAME", "BAZAAR_MONTHLY_PRODUCT_ID", "BAZAAR_ANNUAL_PRODUCT_ID"]
+    .some(key => env[key] !== undefined);
+  if (bazaarKeysPresent) {
+    try {
+      return configuredBazaarProducts(env).some(item =>
+        item.productId === productId && item.basePlanId === basePlanId
+      );
+    } catch { return false; }
   }
+  const playPlans = String(env.PLAY_SUBSCRIPTION_BASE_PLANS || "")
+    .split(",").map(value => value.trim()).filter(Boolean);
+  return productId === env.PLAY_SUBSCRIPTION_PRODUCT_ID && playPlans.includes(basePlanId);
 }
 
 async function bazaarJson(response, errorCode) {
