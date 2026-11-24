@@ -1,3 +1,4 @@
+import re
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -73,9 +74,31 @@ class AndroidReleaseInvariantTests(unittest.TestCase):
 
     def test_store_vault_and_consent_based_cloud_lookup_stay_wired(self):
         app_source = (ROOT / "app/src/main/java/com/antivirusalai/AntivirusApp.kt").read_text(encoding="utf-8")
+        card_source = (ROOT / "app/src/main/java/com/antivirusalai/CloudHashReputationCard.kt").read_text(encoding="utf-8")
         self.assertIn('STORE("store")', app_source)
         self.assertIn('VAULT("vault")', app_source)
-        self.assertIn("CloudHashReputationCard(result = it, fa = fa)", app_source)
+
+        # Keep the billing entitlement and store-navigation callbacks connected
+        # to the optional cloud-reputation card. Match named arguments rather
+        # than formatting so legitimate UI refactors do not stale this guard.
+        card_call = re.search(r"CloudHashReputationCard\\s*\\(([^)]*)\\)", app_source, re.DOTALL)
+        self.assertIsNotNone(card_call, "The scan result must render the cloud-reputation card")
+        card_arguments = card_call.group(1)
+        for argument in (
+            "result = it",
+            "fa = fa",
+            "premiumAccess = premiumAccess",
+            "onOpenStore = onOpenStore",
+        ):
+            with self.subTest(argument=argument):
+                self.assertIn(argument, card_arguments)
+
+        self.assertIn("premiumAccess = billingUiState.entitled", app_source)
+        self.assertIn("onOpenStore = { activeTab = MainTab.STORE.key }", app_source)
+        self.assertIn("if (!premiumAccess)", card_source)
+        self.assertIn("Button(onClick = onOpenStore)", card_source)
+        self.assertIn("showConsent = true", card_source)
+        self.assertIn("CloudThreatApi.checkSha256(digest)", card_source)
 
         self.assertTrue((ROOT / "app/src/main/java/com/antivirusalai/CloudThreatApi.kt").is_file())
         self.assertTrue((ROOT / "app/src/main/java/com/antivirusalai/CloudHashReputationCard.kt").is_file())
