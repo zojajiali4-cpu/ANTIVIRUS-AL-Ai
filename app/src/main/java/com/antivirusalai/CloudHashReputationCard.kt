@@ -87,9 +87,9 @@ fun CloudHashReputationCard(
             )
             Text(
                 text = if (fa) {
-                    "برای بررسی تکمیلی، فقط اثر انگشت SHA-256 فایل ارسال می‌شود؛ خود فایل، نام و مسیر آن ارسال نمی‌شوند."
+                    "برای بررسی تکمیلی، اثر انگشت SHA-256 فایل همراه توکن کوتاه‌عمر تأیید اشتراک PLUS فرستاده می‌شود؛ خود فایل، نام و مسیر آن ارسال نمی‌شوند."
                 } else {
-                    "For an optional second opinion, only the file's SHA-256 digest is sent. The file, filename and path are never uploaded."
+                    "For an optional second opinion, the file's SHA-256 digest and a short-lived PLUS entitlement token are sent. The file, filename and path are never uploaded."
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -176,9 +176,9 @@ fun CloudHashReputationCard(
             text = {
                 Text(
                     if (fa) {
-                        "فقط مقدار SHA-256 این فایل به سرویس ابری فرستاده می‌شود. محتوای فایل، نام، مسیر و URI ارسال نمی‌شوند. سرویس ممکن است فراداده معمول اتصال، مانند نشانی IP، را برای محدودسازی درخواست‌ها پردازش کند. عدم وجود نتیجه، تضمین سالم بودن فایل نیست. آیا موافقی؟"
+                        "مقدار SHA-256 این فایل و یک توکن کوتاه‌عمر برای تأیید اشتراک PLUS به سرویس ابری فرستاده می‌شود. محتوای فایل، نام، مسیر و URI ارسال نمی‌شوند. سرویس ممکن است فراداده معمول اتصال، مانند نشانی IP، را برای محدودسازی درخواست‌ها پردازش کند. عدم وجود نتیجه، تضمین سالم بودن فایل نیست. آیا موافقی؟"
                     } else {
-                        "Only this file's SHA-256 digest will be sent to the cloud service. File contents, filename, path and URI are not sent. The service may process normal connection metadata, such as IP address, for rate limiting. No match is not proof of safety. Do you consent?"
+                        "This file's SHA-256 digest and a short-lived PLUS entitlement token will be sent to the cloud service. File contents, filename, path and URI are not sent. The service may process normal connection metadata, such as IP address, for rate limiting. No match is not proof of safety. Do you consent?"
                     }
                 )
             },
@@ -196,11 +196,15 @@ fun CloudHashReputationCard(
                                 }
                             } catch (cancelled: CancellationException) {
                                 throw cancelled
-                            } catch (_: Exception) {
-                                error = if (fa) {
-                                    "استعلام آنلاین در دسترس نیست؛ نتیجه اسکن محلی تغییری نکرد."
-                                } else {
-                                    "Online lookup is unavailable. Your local scan verdict has not changed."
+                            } catch (failure: Exception) {
+                                val accessExpired = failure.message?.contains(
+                                    "PLUS cloud access expired", ignoreCase = true
+                                ) == true
+                                error = when {
+                                    accessExpired && fa -> "دسترسی ابری PLUS منقضی شده است؛ از فروشگاه، خریدها را بازیابی کن. نتیجه اسکن محلی تغییر نکرد."
+                                    accessExpired -> "PLUS cloud access expired. Restore purchases in Store to refresh it. Your local scan result is unchanged."
+                                    fa -> "استعلام آنلاین در دسترس نیست؛ نتیجه اسکن محلی تغییری نکرد."
+                                    else -> "Online lookup is unavailable. Your local scan verdict has not changed."
                                 }
                             } finally {
                                 loading = false

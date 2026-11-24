@@ -26,8 +26,8 @@ data class CloudHashReputationResult(
  * HTTPS-only API client.
  *
  * URL checks send only the URL explicitly submitted by the user. Hash reputation
- * checks are a separate opt-in action that sends only a SHA-256 digest. File
- * contents, names and local paths are never uploaded by this client.
+ * checks are a separate opt-in action that sends the SHA-256 digest and a
+ * short-lived PLUS entitlement token. File contents, names and local paths are never uploaded by this client.
  */
 object CloudThreatApi {
     private const val MAX_RESPONSE_BYTES = 64 * 1024
@@ -75,7 +75,6 @@ object CloudThreatApi {
             doOutput = true
             setRequestProperty("Accept", "application/json")
             setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            setRequestProperty("Authorization", "Bearer " + accessToken)
             setFixedLengthStreamingMode(payload.size)
         }
 
@@ -131,6 +130,7 @@ object CloudThreatApi {
             doOutput = true
             setRequestProperty("Accept", "application/json")
             setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            setRequestProperty("Authorization", "Bearer " + accessToken)
             setFixedLengthStreamingMode(payload.size)
         }
 
