@@ -182,6 +182,36 @@ jobs:
       - name: Install Android 36 SDK packages
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools" "cmake;3.22.1" "ndk;30.0.16248370"
 
+      - name: Enable KVM access for Android emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -c /dev/kvm ]]; then
+            echo "::error::This runner does not expose /dev/kvm; x86_64 emulator tests require a hardware-accelerated runner."
+            exit 1
+          fi
+
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+          for attempt in $(seq 1 10); do
+            if [[ -r /dev/kvm && -w /dev/kvm ]]; then
+              break
+            fi
+            sleep 1
+          done
+
+          if [[ ! -r /dev/kvm || ! -w /dev/kvm ]]; then
+            echo "::error::KVM device exists but is not readable and writable by the runner after applying the udev rule."
+            id
+            ls -l /dev/kvm || true
+            exit 1
+          fi
+
+          echo "KVM is available to the emulator runner:"
+          ls -l /dev/kvm
+
       - name: Launch app and run instrumentation tests
         uses: reactivecircus/android-emulator-runner@v2
         with:
