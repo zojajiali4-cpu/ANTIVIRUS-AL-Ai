@@ -210,6 +210,7 @@ object DeviceScanEngine {
         var suspiciousCount = 0
         var unknownCount = 0
         var matchedCount = 0
+        val coverage = ScanCoverageAccumulator()
         val list = candidates.values.toList()
         for ((index, file) in list.withIndex()) {
             currentCoroutineContext().ensureActive()
@@ -243,6 +244,7 @@ object DeviceScanEngine {
                 val result = ScanEngine.scan(context.applicationContext, Uri.fromFile(file))
                 totalBytes += result.sizeBytes
                 scannedCount++
+                coverage.record(result)
                 when (result.verdict) {
                     ScanVerdict.KNOWN_MALWARE, ScanVerdict.POTENTIALLY_UNWANTED, ScanVerdict.SUSPICIOUS -> suspiciousCount++
                     ScanVerdict.UNKNOWN_APK, ScanVerdict.UNSUPPORTED_FILE, ScanVerdict.INCOMPLETE_THREAT_INTELLIGENCE -> unknownCount++
@@ -294,7 +296,8 @@ object DeviceScanEngine {
             scannedCountOverride = scannedCount,
             suspiciousCountOverride = suspiciousCount,
             unknownCountOverride = unknownCount,
-            matchedCountOverride = matchedCount
+            matchedCountOverride = matchedCount,
+            coverageMatrix = coverage.snapshot()
         )
     }
 
