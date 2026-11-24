@@ -162,14 +162,14 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
     DisposableEffect(billingManager) {
         onDispose { billingManager?.close() }
     }
-    LaunchedEffect(activeTab) {
-        if (activeTab == MainTab.STORE.key) billingManager?.connect()
-    }
     val scope = rememberCoroutineScope()
     val workManager = remember(context) { WorkManager.getInstance(context.applicationContext) }
     val restoredScan = remember(context) { ScanReportStore.load(context.applicationContext) }
     var language by rememberSaveable { mutableStateOf("fa") }
     var activeTab by rememberSaveable { mutableStateOf(MainTab.HOME.key) }
+    LaunchedEffect(activeTab) {
+        if (activeTab == MainTab.STORE.key) billingManager?.connect()
+    }
     var scanning by remember { mutableStateOf(false) }
     var quarantining by remember { mutableStateOf(false) }
     var showQuarantineConfirmation by remember { mutableStateOf(false) }
