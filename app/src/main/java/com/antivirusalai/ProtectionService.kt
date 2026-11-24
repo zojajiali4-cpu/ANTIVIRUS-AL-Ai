@@ -16,6 +16,7 @@ import android.os.Environment
 import android.os.FileObserver
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import com.antivirusalai.engine.DeviceScanEngine
 import com.antivirusalai.engine.ScanEngine
 import com.antivirusalai.engine.ScanVerdict
 import kotlinx.coroutines.CancellationException
@@ -68,6 +69,9 @@ class ProtectionService : Service() {
 
     private val packageReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
+            // Re-check consent before even reading the package identifier from
+            // a system install event; consent may have been revoked while active.
+            if (!InstalledAppInventoryConsent.isGranted(this@ProtectionService)) return
             val packageName = intent?.data?.schemeSpecificPart ?: return
             if (packageName == packageNameForSelf()) return
             serviceScope.launch {
@@ -96,8 +100,9 @@ class ProtectionService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        // Re-run setup when the activity asks the existing service to start again,
-        // e.g. after the user returns from Android's All files access settings.
+        // Re-evaluate revocable app-inventory consent and storage access whenever
+        // the activity asks the existing service to refresh its coverage.
+        registerPackageMonitor()
         startFileMonitoring()
         return START_STICKY
     }
@@ -139,7 +144,7 @@ class ProtectionService : Service() {
     }
 
     private fun startAsForeground() {
-        val notification = buildProtectionNotification("سرویس محافظت در حال راه‌اندازی است.")
+        val notification = buildProtectionNotification("سرویس محافظت در حال بررسی دسترسی‌ها و محدوده پایش است.")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(
                 NOTIFICATION_ID,
@@ -180,6 +185,17 @@ class ProtectionService : Service() {
     }
 
     private fun registerPackageMonitor() {
+        // Package inventory is a sensitive signal: registering package-change
+        // monitoring is gated by the same explicit, revocable in-app consent.
+        if (!InstalledAppInventoryConsent.isGranted(this)) {
+            if (packageReceiverRegistered) {
+                runCatching { unregisterReceiver(packageReceiver) }
+                packageReceiverRegistered = false
+            }
+            return
+        }
+        if (packageReceiverRegistered) return
+
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_PACKAGE_ADDED)
             addAction(Intent.ACTION_PACKAGE_REPLACED)
@@ -199,23 +215,28 @@ class ProtectionService : Service() {
     }
 
     private fun startFileMonitoring() {
+        if (!DeviceScanEngine.hasBroadStorageAccess(this)) {
+            stopFileMonitoring()
+            val status = when {
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && packageReceiverRegistered ->
+                    "پایش فایل‌های حافظه مشترک فعال نیست؛ دسترسی «مدیریت همه فایل‌ها» داده نشده است. فقط رویداد نصب برنامه‌ها، با رضایت قبلی، پایش می‌شود."
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.R ->
+                    "پایش فایل‌ها فعال نیست؛ دسترسی «مدیریت همه فایل‌ها» و رضایت فهرست برنامه‌ها در دسترس نیست."
+                packageReceiverRegistered ->
+                    "پایش فایل‌های حافظه فعال نیست؛ مجوز خواندن حافظه داده نشده است. فقط رویداد نصب برنامه‌ها با رضایت قبلی پایش می‌شود."
+                else ->
+                    "پایش فایل‌ها و برنامه‌های تازه نصب‌شده فعال نیست؛ مجوز حافظه یا رضایت فهرست برنامه‌ها موجود نیست."
+            }
+            updateProtectionNotification(status)
+            return
+        }
+
         val storage = Environment.getExternalStorageDirectory()
         val storageRoot = runCatching { storage.canonicalFile }.getOrNull()
         if (storageRoot == null) {
             updateProtectionNotification("مسیر حافظه مشترک قابل‌اعتبارسنجی نیست؛ پایش فایل‌ها شروع نشد.")
             return
         }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
-            val status = if (packageReceiverRegistered) {
-                "پایش فایل‌های حافظه مشترک فعال نیست؛ دسترسی «همه فایل‌ها» داده نشده است. فقط رویداد نصب یا به‌روزرسانی برنامه‌ها، تا وقتی این سرویس فعال باشد، بررسی می‌شود."
-            } else {
-                "پایش فایل‌ها و رویداد نصب برنامه‌ها فعال نیست؛ مجوز حافظه داده نشده و گیرنده رویداد برنامه‌ها نیز در دسترس نیست."
-            }
-            updateProtectionNotification(status)
-            return
-        }
-
         val targets = listOf(
             File(storage, "Download"),
             File(storage, "Downloads"),
@@ -229,22 +250,36 @@ class ProtectionService : Service() {
         val visited = ConcurrentHashMap.newKeySet<String>()
         targets.forEach { directory ->
             val monitorRoot = runCatching { directory.canonicalFile }.getOrNull() ?: return@forEach
-            if (monitorRoot.isDirectory &&
-                SharedStoragePathPolicy.isWithinRoot(monitorRoot, storageRoot)
-            ) {
+            if (monitorRoot.isDirectory && SharedStoragePathPolicy.isWithinRoot(monitorRoot, storageRoot)) {
                 watchTree(monitorRoot, monitorRoot, depth = 0, visited = visited)
             }
         }
 
         val status = when {
+            observers.isNotEmpty() && packageReceiverRegistered ->
+                "پایش محدود فعال است: ${observers.size} ناظر پوشه و رویدادهای نصب برنامه‌ها. داده خصوصی برنامه‌ها و ترافیک شبکه پایش نمی‌شود."
             observers.isNotEmpty() ->
-                "پایش محدود فعال است: ${observers.size} ناظر پوشه در مسیرهای مشترک و حداکثر عمق ۲. داده خصوصی برنامه‌ها و ترافیک شبکه پایش نمی‌شود."
+                "پایش محدود فعال است: ${observers.size} ناظر پوشه. فهرست برنامه‌های نصب‌شده تحت رضایت کاربر فعال نیست و ترافیک شبکه پایش نمی‌شود."
             packageReceiverRegistered ->
-                "هیچ پوشه حافظه مشترکی تحت پایش نیست؛ فقط رویداد نصب یا به‌روزرسانی برنامه‌ها هنگام فعال بودن سرویس بررسی می‌شود."
+                "پایش فایل حافظه مشترک فعال نیست؛ فقط رویدادهای نصب یا به‌روزرسانی برنامه‌ها پایش می‌شوند."
             else ->
-                "هیچ مسیر فایلی یا رویداد نصب برنامه‌ای در این نشست تحت پایش نیست."
+                "در این نشست هیچ پوشه فایل یا رویداد نصب برنامه‌ای تحت پایش نیست."
         }
         updateProtectionNotification(status)
+    }
+
+    /**
+     * Immediately detach every watcher when Android storage access is revoked.
+     * The pending scan queue is still bounded; scanFile also re-checks access
+     * before opening a queued path, so stale events cannot continue scanning.
+     */
+    private fun stopFileMonitoring() {
+        observers.toList().forEach { observer ->
+            runCatching { observer.stopWatching() }
+            if (observers.remove(observer)) releaseWatcherSlot()
+        }
+        observers.clear()
+        synchronized(watchedPaths) { watchedPaths.clear() }
     }
 
     private fun watchTree(directory: File, allowedRoot: File, depth: Int, visited: MutableSet<String>) {
@@ -377,6 +412,7 @@ class ProtectionService : Service() {
     }
 
     private suspend fun scanInstalledPackage(packageName: String) {
+        if (!InstalledAppInventoryConsent.isGranted(this)) return
         try {
             val info = if (Build.VERSION.SDK_INT >= 33) {
                 packageManager.getApplicationInfo(
@@ -401,6 +437,10 @@ class ProtectionService : Service() {
             // A readable split cannot hide a missing/unreadable base APK component.
             var incomplete = !hasBaseApkPath
             for (path in apkPaths) {
+                if (!InstalledAppInventoryConsent.isGranted(this)) {
+                    incomplete = true
+                    break
+                }
                 val apk = File(path)
                 if (!apk.isFile || !apk.canRead() || apk.length() <= 0L ||
                     apk.length() > ScanEngine.MAX_FILE_SIZE_BYTES
@@ -443,15 +483,17 @@ class ProtectionService : Service() {
 
     private suspend fun scanFile(file: File, allowedRoot: File, displayName: String = file.name) {
         try {
-            // Re-resolve immediately before opening the file: the path may have been
-            // replaced with a symlink after the FileObserver event was queued.
+            if (!DeviceScanEngine.hasBroadStorageAccess(this)) {
+                postUnverifiedAlert(displayName, "Shared-storage access was revoked before this queued file could be scanned.")
+                return
+            }
+            // Re-resolve immediately before opening: a queued path may have been
+            // replaced with a symbolic link or redirected outside the monitored root.
             val canonical = runCatching { file.canonicalFile }.getOrNull()
             if (canonical == null || !SharedStoragePathPolicy.isWithinRoot(canonical, allowedRoot)) {
                 postUnverifiedAlert(displayName, "The file path changed or escaped the monitored folder; it was not scanned.")
                 return
             }
-            // A stale event is harmless, but a present file that cannot be read or
-            // exceeds the scanner's hard ceiling must be surfaced as unverified.
             if (!canonical.isFile) return
             if (!canonical.canRead()) {
                 postUnverifiedAlert(displayName, "The file is not readable by this app; no content scan was completed.")
