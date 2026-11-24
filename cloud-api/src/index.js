@@ -3,6 +3,8 @@ const HASH = /^[a-f0-9]{64}$/;
 const KEY_ID = /^[A-Za-z0-9._-]{1,40}$/;
 const MAX_FEED_BYTES = 4 * 1024 * 1024;
 const MAX_FEED_LIFETIME_SECONDS = 30 * 24 * 60 * 60;
+const PLUS_ACCESS_AUDIENCE = "antivirus-al-ai:hash-reputation";
+const PLUS_ACCESS_TTL_SECONDS = 5 * 60;
 const out = (v,s=200) => new Response(JSON.stringify(v),{status:s,headers:H});
 
 function inspectUrl(value) {
@@ -243,6 +245,7 @@ async function getPlayPublisherAccessToken(env, nowSeconds) {
 }
 
 async function fetchGoogleSubscriptionConfiguration(env, nowSeconds) {
+  if (!isPlusSigningSecretConfigured(env)) throw Error("PLUS_ENTITLEMENT_SIGNING_NOT_CONFIGURED");
   const packageName = env.PLAY_PACKAGE_NAME;
   const productId = env.PLAY_SUBSCRIPTION_PRODUCT_ID;
   const requiredBasePlans = String(env.PLAY_SUBSCRIPTION_BASE_PLANS || "")
@@ -389,6 +392,107 @@ async function sha256Hex(value) {
   return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("");
 }
 
+function isPlusSigningSecretConfigured(env) {
+  const secret = typeof env.PLUS_ENTITLEMENT_HMAC_SECRET === "string"
+    ? env.PLUS_ENTITLEMENT_HMAC_SECRET : "";
+  const length = new TextEncoder().encode(secret).byteLength;
+  return length >= 32 && length <= 4096;
+}
+
+function encodeBase64Url(bytes) {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function decodeBase64Url(value, maxBytes = 2048) {
+  if (typeof value !== "string" || !value.length || value.length > 4096 ||
+      !/^[A-Za-z0-9_-]+$/.test(value)) throw Error("PLUS_TOKEN_INVALID");
+  const base64 = value.replace(/-/g, "+").replace(/_/g, "/") +
+    "=".repeat((4 - value.length % 4) % 4);
+  let binary;
+  try { binary = atob(base64); } catch { throw Error("PLUS_TOKEN_INVALID"); }
+  if (!binary.length || binary.length > maxBytes) throw Error("PLUS_TOKEN_INVALID");
+  return Uint8Array.from(binary, character => character.charCodeAt(0));
+}
+
+async function issuePlusAccessToken(env, verified, nowSeconds) {
+  if (!isPlusSigningSecretConfigured(env)) throw Error("PLUS_ENTITLEMENT_SIGNING_NOT_CONFIGURED");
+  const allowedStates = new Set([
+    "SUBSCRIPTION_STATE_ACTIVE", "SUBSCRIPTION_STATE_IN_GRACE_PERIOD",
+    "SUBSCRIPTION_STATE_CANCELED"
+  ]);
+  const allowedPlans = String(env.PLAY_SUBSCRIPTION_BASE_PLANS || "")
+    .split(",").map(value => value.trim()).filter(Boolean);
+  const subscriptionExpiresAt = Math.floor(verified.expiryMillis / 1000);
+  if (!verified.entitled || !allowedStates.has(verified.state) ||
+      verified.productId !== env.PLAY_SUBSCRIPTION_PRODUCT_ID ||
+      !allowedPlans.includes(verified.basePlanId) ||
+      !Number.isSafeInteger(subscriptionExpiresAt) || subscriptionExpiresAt <= nowSeconds) {
+    throw Error("PLUS_ENTITLEMENT_NOT_ACTIVE");
+  }
+  const issuedAt = nowSeconds;
+  const expiresAt = Math.min(issuedAt + PLUS_ACCESS_TTL_SECONDS, subscriptionExpiresAt);
+  if (expiresAt <= issuedAt) throw Error("PLUS_ENTITLEMENT_NOT_ACTIVE");
+  const claims = {
+    v: 1, aud: PLUS_ACCESS_AUDIENCE, productId: verified.productId,
+    basePlanId: verified.basePlanId, subscriptionState: verified.state,
+    subscriptionExpiresAt, iat: issuedAt, exp: expiresAt
+  };
+  const encodedClaims = encodeBase64Url(new TextEncoder().encode(JSON.stringify(claims)));
+  const key = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(env.PLUS_ENTITLEMENT_HMAC_SECRET),
+    { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(encodedClaims));
+  return encodedClaims + "." + encodeBase64Url(new Uint8Array(signature));
+}
+
+async function verifyPlusAccessToken(req, env, nowSeconds) {
+  if (!isPlusSigningSecretConfigured(env)) throw Error("PLUS_ENTITLEMENT_SIGNING_NOT_CONFIGURED");
+  const authorization = req.headers.get("authorization") || "";
+  const match = /^Bearer ([A-Za-z0-9_.-]{20,4096})$/.exec(authorization);
+  if (!match) return false;
+  const parts = match[1].split(".");
+  if (parts.length !== 2) return false;
+  let payloadBytes, signature;
+  try {
+    payloadBytes = decodeBase64Url(parts[0], 2048);
+    signature = decodeBase64Url(parts[1], 64);
+  } catch { return false; }
+  if (signature.byteLength !== 32) return false;
+  let claims;
+  try {
+    claims = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(payloadBytes));
+  } catch { return false; }
+  const key = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(env.PLUS_ENTITLEMENT_HMAC_SECRET),
+    { name: "HMAC", hash: "SHA-256" }, false, ["verify"]
+  );
+  const validSignature = await crypto.subtle.verify(
+    "HMAC", key, signature, new TextEncoder().encode(parts[0])
+  );
+  if (!validSignature) return false;
+  const configuredPlans = String(env.PLAY_SUBSCRIPTION_BASE_PLANS || "")
+    .split(",").map(value => value.trim()).filter(Boolean);
+  const allowedStates = new Set([
+    "SUBSCRIPTION_STATE_ACTIVE", "SUBSCRIPTION_STATE_IN_GRACE_PERIOD",
+    "SUBSCRIPTION_STATE_CANCELED"
+  ]);
+  const { v, aud, productId, basePlanId, subscriptionState,
+    subscriptionExpiresAt, iat, exp } = claims || {};
+  if (v !== 1 || aud !== PLUS_ACCESS_AUDIENCE ||
+      productId !== env.PLAY_SUBSCRIPTION_PRODUCT_ID ||
+      !configuredPlans.includes(basePlanId) || !allowedStates.has(subscriptionState) ||
+      !Number.isSafeInteger(iat) || !Number.isSafeInteger(exp) ||
+      !Number.isSafeInteger(subscriptionExpiresAt) ||
+      iat > nowSeconds + 30 || exp <= nowSeconds || exp <= iat ||
+      exp - iat > PLUS_ACCESS_TTL_SECONDS || subscriptionExpiresAt <= nowSeconds ||
+      exp > subscriptionExpiresAt ||
+      exp !== Math.min(iat + PLUS_ACCESS_TTL_SECONDS, subscriptionExpiresAt)) return false;
+  return true;
+}
+
 export default { async fetch(req,env){
  const u=new URL(req.url), p=u.pathname;
  if(req.method==="OPTIONS"){
@@ -423,6 +527,8 @@ export default { async fetch(req,env){
  }
  if(p==="/v1/hash/reputation"&&req.method==="POST"){
    try{
+     if (!isPlusSigningSecretConfigured(env)) return out({ error: "PLUS_ENTITLEMENT_SIGNING_NOT_CONFIGURED" }, 503);
+     if (!await verifyPlusAccessToken(req, env, Math.floor(Date.now() / 1000))) return out({ error: "PLUS_ENTITLEMENT_REQUIRED" }, 403);
      const x=await body(req),h=typeof x.sha256==="string"?x.sha256.toLowerCase():"";
      if(!HASH.test(h)) return out({error:"INVALID_SHA256"},400);
      const r=await env.DB.prepare("SELECT classification,family_id,source,updated_at FROM hash_reputation WHERE sha256=?").bind(h).first();
@@ -447,7 +553,8 @@ export default { async fetch(req,env){
    }catch(error){
      const code=error?.message||"";
      if(code==="PLAY_BILLING_NOT_CONFIGURED"||code==="PLAY_SERVICE_ACCOUNT_INVALID"||
-        code==="PLAY_SUBSCRIPTION_PRODUCT_MISSING"||code==="PLAY_SUBSCRIPTION_CONFIGURATION_INVALID"){
+        code==="PLAY_SUBSCRIPTION_PRODUCT_MISSING"||code==="PLAY_SUBSCRIPTION_CONFIGURATION_INVALID"||
+        code==="PLUS_ENTITLEMENT_SIGNING_NOT_CONFIGURED"){
        return out({ok:true,checkoutReady:false,productId:null,activeBasePlans:[],reason:"NOT_CONFIGURED"});
      }
      return out({ok:false,checkoutReady:false,productId:null,activeBasePlans:[],error:"BILLING_VERIFICATION_UNAVAILABLE"},503);
@@ -462,7 +569,8 @@ export default { async fetch(req,env){
        return out({error:"INVALID_PURCHASE_TOKEN"},400);
      }
      if(!env.PLAY_SERVICE_ACCOUNT_JSON||!env.PLAY_PACKAGE_NAME||
-        !env.PLAY_SUBSCRIPTION_PRODUCT_ID||!env.PLAY_SUBSCRIPTION_BASE_PLANS) {
+        !env.PLAY_SUBSCRIPTION_PRODUCT_ID||!env.PLAY_SUBSCRIPTION_BASE_PLANS||
+        !isPlusSigningSecretConfigured(env)) {
        return out({error:"BILLING_NOT_CONFIGURED"},503);
      }
      if(requestedProduct!==env.PLAY_SUBSCRIPTION_PRODUCT_ID) {
@@ -478,12 +586,15 @@ export default { async fetch(req,env){
        tokenHash,verified.productId,verified.basePlanId,verified.state,
        Math.floor(verified.expiryMillis/1000),verified.isTrial?1:0,nowMillis,nowMillis
      ).run();
+     const cloudAccessToken = verified.entitled
+       ? await issuePlusAccessToken(env, verified, nowSeconds) : null;
      return out({
        ok:true, entitled:verified.entitled, subscriptionState:verified.state,
        productId:verified.productId, basePlanId:verified.basePlanId,
        offerId:verified.offerId, isTrial:verified.isTrial,
        expiresAtEpochMillis:verified.expiryMillis,
-       acknowledgementState:verified.acknowledgementState
+       acknowledgementState:verified.acknowledgementState,
+       cloudAccessToken
      });
    } catch(error) {
      const code=error?.message||"";
@@ -493,7 +604,8 @@ export default { async fetch(req,env){
      if(code==="PLAY_PURCHASE_TOKEN_INVALID") return out({error:"INVALID_PURCHASE_TOKEN"},400);
      if(code==="PLAY_PRODUCT_MISMATCH") return out({error:"PURCHASE_PRODUCT_MISMATCH"},400);
      if(code==="PLAY_PURCHASE_NOT_ENTITLED") return out({error:"PURCHASE_NOT_ENTITLED"},200);
-     if(code==="PLAY_BILLING_NOT_CONFIGURED"||code==="PLAY_SERVICE_ACCOUNT_INVALID") {
+     if(code==="PLAY_BILLING_NOT_CONFIGURED"||code==="PLAY_SERVICE_ACCOUNT_INVALID"||
+        code==="PLUS_ENTITLEMENT_SIGNING_NOT_CONFIGURED") {
        return out({error:"BILLING_NOT_CONFIGURED"},503);
      }
      if(code==="PLAY_ACKNOWLEDGEMENT_FAILED") return out({error:"PURCHASE_ACKNOWLEDGEMENT_PENDING"},503);

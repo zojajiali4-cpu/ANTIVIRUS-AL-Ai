@@ -24,7 +24,7 @@ The regional launch matrix is configured in Play Console only after the account 
 3. The app opens the native Google Play purchase sheet with a fresh offer token.
 4. The app sends the resulting purchase token to the first-party HTTPS Worker. It sends no file, scan sample, filename, filesystem path, or device app inventory.
 5. The Worker uses the Android Publisher API to validate the token, exact package, product, supported base plan, subscription state and expiry. It acknowledges a verified new purchase. The raw purchase token is not stored; only its SHA-256 digest and minimal entitlement metadata are persisted in D1.
-6. The app grants PLUS only after the server response confirms an allowed state and unexpired entitlement. Pending, on-hold, paused, expired, unrecognized, mismatched or unverifiable purchases do not unlock features.
+6. The app grants PLUS only after the server response confirms an allowed state and unexpired entitlement. The Worker also issues a signed, audience-scoped cloud-access bearer token with a maximum five-minute lifetime; the hash-reputation endpoint validates it independently, so changing or bypassing the app UI cannot unlock the API. Pending, on-hold, paused, expired, unrecognized, mismatched or unverifiable purchases do not unlock features.
 7. Restore re-queries subscriptions owned by the current Play account and verifies them again with the server. Cancellation and renewal are managed in Google Play; a canceled but unexpired subscription retains access until its verified expiry.
 
 ## Required Play Console setup
@@ -36,6 +36,7 @@ The first launch should use a closed/internal testing track and licensed test ac
 ## Required Cloudflare setup
 
 - Set `PLAY_SERVICE_ACCOUNT_JSON` as a Worker secret only. Use a dedicated service account linked to the correct Play Console account with minimum required Android Publisher permissions. Never commit, log, paste into chat, or package the private key.
+- Set `PLUS_ENTITLEMENT_HMAC_SECRET` as a separate Worker secret with at least 32 bytes of cryptographically random data. It signs short-lived PLUS API tokens and must not be reused for rate limiting, feed signing, or Google service-account credentials.
 - Apply `cloud-api/migrations/0002_play_billing.sql` to the configured D1 database.
 - Deploy the Worker only after reviewed tests and account-owner approval.
 - Verify `/v1/billing/status` returns the intended active plans before enabling a real Play product/offer for testers.

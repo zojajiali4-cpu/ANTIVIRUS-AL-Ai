@@ -1,12 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createHash, createSign, generateKeyPairSync, webcrypto } from "node:crypto";
+import { createHash, createHmac, createSign, generateKeyPairSync, webcrypto } from "node:crypto";
 
 if (!globalThis.crypto) Object.defineProperty(globalThis, "crypto", { value: webcrypto });
 
 const { default: worker } = await import("../src/index.js");
 const encoder = new TextEncoder();
 const RATE_SALT = "a9".repeat(32);
+const PLUS_ENTITLEMENT_HMAC_SECRET = "unit-test-plus-entitlement-secret-32-bytes-min";
 const CLIENT_IP = "203.0.113.17";
 const KEY_ID = "test-publisher-2026";
 const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
@@ -59,6 +60,21 @@ function makeD1({ fail = false } = {}) {
       };
     }
   };
+}
+
+function signedPlusAccessToken(overrides = {}) {
+  const now = Math.floor(Date.now() / 1000);
+  const claims = {
+    v: 1, aud: "antivirus-al-ai:hash-reputation", productId: "alai_plus",
+    basePlanId: "monthly", subscriptionState: "SUBSCRIPTION_STATE_ACTIVE",
+    subscriptionExpiresAt: now + 3600, iat: now, exp: now + 300, ...overrides
+  };
+  const encoded = Buffer.from(JSON.stringify(claims)).toString("base64url");
+  const signature = createHmac("sha256", PLUS_ENTITLEMENT_HMAC_SECRET).update(encoded).digest("base64url");
+  return encoded + "." + signature;
+}
+function plusAuthorization(token = signedPlusAccessToken()) {
+  return { authorization: "Bearer " + token };
 }
 
 function request(path, body = undefined, headers = {}) {
@@ -221,14 +237,20 @@ test("admin feed publishing prevents version rollback", async () => {
 });
 
 test("request bodies are bounded before JSON parsing", async () => {
-  const response = await worker.fetch(request("/v1/hash/reputation", { sha256: "a".repeat(70_000) }), { DB: makeD1(), RATE_SALT });
+  const response = await worker.fetch(
+    request("/v1/hash/reputation", { sha256: "a".repeat(70_000) }, plusAuthorization()),
+    playBillingEnvironment()
+  );
   assert.equal(response.status, 400);
   assert.equal((await json(response)).error, "BODY_TOO_LARGE");
 });
 
 
 test("an absent hash reputation record remains UNKNOWN, never clean", async () => {
-  const response = await worker.fetch(request("/v1/hash/reputation", { sha256: "f".repeat(64) }), { DB: makeD1(), RATE_SALT });
+  const response = await worker.fetch(
+    request("/v1/hash/reputation", { sha256: "f".repeat(64) }, plusAuthorization()),
+    playBillingEnvironment()
+  );
   assert.equal(response.status, 200);
   const result = await json(response);
   assert.equal(result.found, false);
@@ -264,7 +286,10 @@ test("URL analysis rejects unsupported schemes without attempting a fetch", asyn
 });
 
 test("hash reputation rejects malformed digests", async () => {
-  const response = await worker.fetch(request("/v1/hash/reputation", { sha256: "not-a-hash" }), { DB: makeD1(), RATE_SALT });
+  const response = await worker.fetch(
+    request("/v1/hash/reputation", { sha256: "not-a-hash" }, plusAuthorization()),
+    playBillingEnvironment()
+  );
   assert.equal(response.status, 400);
   assert.equal((await json(response)).error, "INVALID_SHA256");
 });
@@ -297,7 +322,8 @@ function playBillingEnvironment(db = makeD1()) {
     PLAY_PACKAGE_NAME: "com.antivirusalai",
     PLAY_SUBSCRIPTION_PRODUCT_ID: "alai_plus",
     PLAY_SUBSCRIPTION_BASE_PLANS: "monthly,annual",
-    PLAY_SERVICE_ACCOUNT_JSON: playServiceAccount
+    PLAY_SERVICE_ACCOUNT_JSON: playServiceAccount,
+    PLUS_ENTITLEMENT_HMAC_SECRET
   };
 }
 async function withPlayApi(purchase, callback, {
@@ -357,6 +383,46 @@ function subscriptionFixture(overrides = {}) {
   };
 }
 
+test("hash reputation rejects missing, forged and expired PLUS access tokens before database lookup", async () => {
+  const db = makeD1();
+  const env = playBillingEnvironment(db);
+  const cases = [
+    {},
+    plusAuthorization("not-a-valid-token.signature"),
+    plusAuthorization(signedPlusAccessToken({ exp: Math.floor(Date.now() / 1000) - 1 })),
+    plusAuthorization(signedPlusAccessToken({ subscriptionExpiresAt: Math.floor(Date.now() / 1000) - 1 }))
+  ];
+  for (const headers of cases) {
+    const response = await worker.fetch(request("/v1/hash/reputation", { sha256: "f".repeat(64) }, headers), env);
+    assert.equal(response.status, 403);
+    assert.equal((await json(response)).error, "PLUS_ENTITLEMENT_REQUIRED");
+  }
+  assert.equal(db.statements.some(statement =>
+    statement.sql.startsWith("SELECT classification,family_id,source,updated_at FROM hash_reputation")
+  ), false);
+});
+
+test("hash reputation fails closed when the PLUS signing secret is missing", async () => {
+  const env = playBillingEnvironment();
+  delete env.PLUS_ENTITLEMENT_HMAC_SECRET;
+  const response = await worker.fetch(
+    request("/v1/hash/reputation", { sha256: "f".repeat(64) }, plusAuthorization()),
+    env
+  );
+  assert.equal(response.status, 503);
+  assert.equal((await json(response)).error, "PLUS_ENTITLEMENT_SIGNING_NOT_CONFIGURED");
+});
+
+test("billing readiness remains closed until a PLUS entitlement signing secret is configured", async () => {
+  const env = playBillingEnvironment();
+  delete env.PLUS_ENTITLEMENT_HMAC_SECRET;
+  const response = await worker.fetch(request("/v1/billing/status"), env);
+  assert.equal(response.status, 200);
+  const result = await json(response);
+  assert.equal(result.checkoutReady, false);
+  assert.equal(result.reason, "NOT_CONFIGURED");
+});
+
 test("Play subscription verification fails closed when server credentials are absent", async () => {
   const response = await worker.fetch(
     request("/v1/billing/subscription/verify", {
@@ -394,6 +460,14 @@ test("Play subscription verification validates with Google, acknowledges, and st
     assert.equal(result.isTrial, true);
     assert.equal(result.basePlanId, "monthly");
     assert.equal(result.acknowledgementState, "ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED");
+    assert.equal(typeof result.cloudAccessToken, "string");
+    assert.ok(result.cloudAccessToken.length > 40);
+    const lookup = await worker.fetch(
+      request("/v1/hash/reputation", { sha256: "f".repeat(64) }, plusAuthorization(result.cloudAccessToken)),
+      env
+    );
+    assert.equal(lookup.status, 200);
+    assert.equal((await json(lookup)).classification, "UNKNOWN");
     assert.ok(calls.some(call => call.method === "POST" && call.url.includes(":acknowledge")));
   });
   const insert = db.statements.find(item => item.sql.startsWith("INSERT INTO play_billing_verifications"));

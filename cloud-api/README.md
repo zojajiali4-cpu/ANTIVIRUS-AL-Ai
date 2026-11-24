@@ -20,11 +20,12 @@ Endpoints: GET `/v1/health`; POST `/v1/url/check`; POST `/v1/hash/reputation`; G
 Configure secrets through Wrangler's secret manager; do not put their values in `wrangler.toml`, source files, GitHub issues, logs, or the APK.
 
 - `RATE_SALT`: high-entropy random secret with at least 32 bytes. Use a generated secret and keep a protected backup. Do not reuse `ADMIN_API_KEY` as the rate-limit key.
+- `PLUS_ENTITLEMENT_HMAC_SECRET`: independent high-entropy secret of at least 32 bytes used to sign short-lived PLUS cloud-access tokens. Never reuse `RATE_SALT`, `ADMIN_API_KEY`, or the Google service-account key.
 - `ADMIN_API_KEY`: separate administrative bearer credential for the feed-publish endpoint.
 - `FEED_KEY_ID`: exact key identifier pinned in the signed feed header.
 - `FEED_PUBLIC_KEY_B64`: Base64-encoded X.509 SubjectPublicKeyInfo for the matching ECDSA P-256 public key. The Worker verifies the feed signature over the exact UTF-8 payload before storing it. The private signing key must remain outside Cloudflare, GitHub, this repository, and the Android app.
 
-For example, from a trusted local terminal connected to the correct Cloudflare account, configure each secret with `wrangler secret put RATE_SALT` and `wrangler secret put ADMIN_API_KEY`. The CLI prompts for the values; never paste them into chat.
+For example, from a trusted local terminal connected to the correct Cloudflare account, configure secrets with `wrangler secret put RATE_SALT`, `wrangler secret put PLUS_ENTITLEMENT_HMAC_SECRET`, and `wrangler secret put ADMIN_API_KEY`. The CLI prompts for values; never paste secrets into chat.
 
 Rotating `RATE_SALT` changes the rate-limit identifiers and resets the effective per-IP bucket history. Coordinate rotation deliberately. Old rows are not reversible and are removed by periodic D1 cleanup.
 
@@ -56,7 +57,7 @@ Apply the D1 migration before enabling the endpoint:
 wrangler d1 migrations apply antivirus-al-ai-threat-intel --remote
 ```
 
-The endpoint POST /v1/billing/subscription/verify accepts only a Google Play purchase token and the configured product ID. It verifies the token with purchases.subscriptionsv2.get, checks the package, product, configured base plan, state and expiry, acknowledges a verified unacknowledged purchase, and returns a minimal entitlement result. It stores only a SHA-256 digest of the purchase token; the raw token is never persisted or logged. The route fails closed when service-account credentials, D1, rate limiting or Google verification are unavailable.
+The endpoint POST /v1/billing/subscription/verify accepts only a Google Play purchase token and the configured product ID. It verifies the token with purchases.subscriptionsv2.get, checks the package, product, configured base plan, state and expiry, acknowledges a verified unacknowledged purchase, and returns a minimal entitlement result plus a Worker-signed HMAC bearer token scoped to hash reputation. That token expires within five minutes or at the verified subscription expiry, whichever comes first. POST /v1/hash/reputation requires this token and rejects missing, forged, expired, wrong-product, wrong-plan or wrong-state tokens before querying D1. It stores only a SHA-256 digest of the Google purchase token; the raw purchase token is never persisted or logged. The routes fail closed when service-account credentials, D1, rate limiting, the signing secret or Google verification are unavailable.
 
 Entitlement rules: ACTIVE and IN_GRACE_PERIOD subscriptions are entitled; CANCELED subscriptions remain entitled only until their verified expiry; PENDING, ON_HOLD, PAUSED and EXPIRED subscriptions are not entitled. A purchase must be verified by Google before access is granted. Client-side UI state is not proof of purchase.
 
