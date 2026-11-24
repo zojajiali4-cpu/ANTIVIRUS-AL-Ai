@@ -33,11 +33,12 @@
 - [x] Expose vault list/restore/delete APIs and accurate source-removal result.
 - [ ] Build quarantine-management UI, restore destination flow, and recovery tests on multiple document providers.
 - [ ] Add Android uninstall handoff with explicit user confirmation; no silent uninstall.
-- [ ] Design any continuous monitoring only through supported Android APIs, with battery, privacy, and Play policy review.
+- [ ] Design any continuous monitoring only through supported Android APIs, with battery, privacy, and target-market policy review.
 
 ## Phase 4 — Independent validation and release readiness
 - [ ] Measure precision, recall, false-positive rate, false-negative rate, unknown coverage, scan latency, and battery cost on a lawful benchmark.
 - [ ] Complete an external security review and independent AV detection evaluation (AV-TEST or equivalent).
 - [ ] Resolve all critical/high findings and publish a reproducible report.
-- [ ] Complete Play Console permission declarations for MANAGE_EXTERNAL_STORAGE and QUERY_ALL_PACKAGES.
-- [ ] Complete privacy, retention, accessibility, localization, billing, release-signing, and supply-chain reviews.
+- [ ] Complete Cafe Bazaar / Android marketplace declarations and review for MANAGE_EXTERNAL_STORAGE and QUERY_ALL_PACKAGES; provide a useful limited mode when access is declined.
+- [ ] Complete Pishkhan SKU, Developer API credential, Worker secret, D1 migration and internal purchase/restore tests (see `docs/CAFEBAZAAR_RELEASE_READINESS.md`).
+- [ ] Complete privacy, retention, accessibility, localization, Cafe Bazaar billing, release-signing, and supply-chain reviews.

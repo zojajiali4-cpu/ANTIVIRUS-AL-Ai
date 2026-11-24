@@ -234,6 +234,24 @@ test("Cafe Bazaar subscription verification rejects unknown product IDs before n
   assert.equal((await json(response)).error, "SUBSCRIPTION_NOT_ALLOWED");
 });
 
+test("Cafe Bazaar subscription verification rejects a response with an unexpected resource kind", async () => {
+  const env = bazaarEnvironment();
+  await withBazaarApi({
+    kind: "unexpected-resource",
+    validUntilTimestampMsec: String(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    autoRenewing: true
+  }, async () => {
+    const response = await worker.fetch(
+      request("/v1/billing/bazaar/verify", {
+        subscriptionId: BAZAAR_MONTHLY,
+        purchaseToken: "bazaar-purchase-token-123456789"
+      }), env
+    );
+    assert.equal(response.status, 502);
+    assert.equal((await json(response)).error, "BAZAAR_PURCHASE_RESPONSE_INVALID");
+  });
+});
+
 test("Cafe Bazaar subscription verification rejects expired subscription periods", async () => {
   const env = bazaarEnvironment();
   await withBazaarApi({

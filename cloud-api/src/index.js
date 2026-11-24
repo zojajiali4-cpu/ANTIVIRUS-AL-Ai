@@ -119,8 +119,9 @@ function isBazaarBillingConfigured(env) {
     env.BAZAAR_PACKAGE_NAME === "com.antivirusalai" &&
     typeof env.BAZAAR_SUBSCRIPTION_MONTHLY_ID === "string" &&
     typeof env.BAZAAR_SUBSCRIPTION_ANNUAL_ID === "string" &&
-    env.BAZAAR_SUBSCRIPTION_MONTHLY_ID.length > 2 &&
-    env.BAZAAR_SUBSCRIPTION_ANNUAL_ID.length > 2 &&
+    /^[A-Za-z0-9._-]{3,100}$/.test(env.BAZAAR_SUBSCRIPTION_MONTHLY_ID) &&
+    /^[A-Za-z0-9._-]{3,100}$/.test(env.BAZAAR_SUBSCRIPTION_ANNUAL_ID) &&
+    env.BAZAAR_SUBSCRIPTION_MONTHLY_ID !== env.BAZAAR_SUBSCRIPTION_ANNUAL_ID &&
     secretLength >= 32 && secretLength <= 4096
   );
 }
@@ -193,6 +194,9 @@ async function fetchBazaarSubscription(env, accessToken, subscriptionId, purchas
   }
   if (!response.ok) throw Error("BAZAAR_PURCHASE_LOOKUP_UNAVAILABLE");
   const result = await readBazaarJson(response);
+  if (result.kind !== "androidpublisher#subscriptionPurchase") {
+    throw Error("BAZAAR_SUBSCRIPTION_RESPONSE_INVALID");
+  }
   const expiry = Number(result.validUntilTimestampMsec);
   if (!Number.isSafeInteger(expiry) || expiry <= 0) {
     throw Error("BAZAAR_SUBSCRIPTION_RESPONSE_INVALID");

@@ -4,7 +4,7 @@
 
 For support requests, bug reports, and product feedback, contact **Zojajiali4@gmail.com**. The Android Settings → Support screen opens the device's email app when available.
 
-Privacy-first Android security scanner. Current Android milestone: **0.3.0 (versionCode 3)**. The app includes a bilingual Persian/English dashboard, automatic quick/deep shared-storage scanning, a bounded local scan pipeline, an authenticated threat-feed client, and an encrypted quarantine vault.
+Privacy-first Android security scanner. Cafe Bazaar release candidate: **0.4.0 (versionCode 4)**. The app includes a bilingual Persian/English dashboard, automatic quick/deep shared-storage scanning, a bounded local scan pipeline, an authenticated threat-feed client, and an encrypted quarantine vault.
 
 ## Implemented security layers
 
@@ -59,9 +59,9 @@ See [Scanning coverage and known limitations](docs/SCANNING_COVERAGE.md) for the
 
 ## Important Android and detection boundaries
 
-A clean result means only that no currently loaded feed hash or configured static signal matched. It is **not** a guarantee that a file is safe. Hash matching misses unknown, modified, packed, or polymorphic files. The app does not inspect other apps' private data or live process memory, does not replace Google Play Protect, and does not currently provide real-time protection for every app or network connection.
+A clean result means only that no currently loaded feed hash or configured static signal matched. It is **not** a guarantee that a file is safe. Hash matching misses unknown, modified, packed, or polymorphic files. The app does not inspect other apps' private data or live process memory, is not a replacement for Android's built-in platform security protections, and does not currently provide real-time protection for every app or network connection.
 
-The manifest requests `MANAGE_EXTERNAL_STORAGE` and `QUERY_ALL_PACKAGES` for shared-storage and installed-app security scans. Installed-app inventory is denied by default and is read only after separate, revocable in-app consent; without consent, both device scans and the real-time package-install monitor skip installed-app inventory. Shared-storage access is checked independently using the Android special setting on Android 11+ or the legacy storage permission on earlier versions. These sensitive permissions still require the appropriate Google Play declarations and review; in-app consent does not replace Play approval. Android continues to restrict other apps' private storage and protected directories such as `Android/data` and `Android/obb`.
+The manifest requests `MANAGE_EXTERNAL_STORAGE` and `QUERY_ALL_PACKAGES` for shared-storage and installed-app security scans. Installed-app inventory is denied by default and is read only after separate, revocable in-app consent; without consent, both device scans and the real-time package-install monitor skip installed-app inventory. Shared-storage access is checked independently using the Android special setting on Android 11+ or the legacy storage permission on earlier versions. These sensitive permissions still require review against Android and the target marketplace's current policies; in-app consent does not replace marketplace approval. Android continues to restrict other apps' private storage and protected directories such as `Android/data` and `Android/obb`.
 
 Quarantine can remove an accessible source file only when Android/the provider permits deletion. It cannot silently uninstall installed packages, remove system apps, or guarantee physical secure erasure on flash storage.
 
@@ -73,7 +73,7 @@ See `docs/DETECTION_VALIDATION.md`, `docs/THREAT_INTEL_OPERATIONS.md`, and `docs
 
 ## Build
 
-The Android package version is `0.3.0` (`versionCode=3`). GitHub Actions publishes `ANTIVIRUS-AL-AI-v0.3.0-debug.apk` with source commit, workflow run ID, signer-certificate fingerprint, and SHA-256 metadata. This debug APK is for testing only and is not a production-signed release package. The Store currently previews plans; Google Play Billing is not connected.
+The Bazaar candidate package version is `0.4.0` (`versionCode=4`). The app uses Poolakey 2.3.0 for Bazaar subscription SKU lookup, trial eligibility, checkout and restore; final subscription entitlement is independently verified by the Cafe Bazaar Developer API through the first-party Worker. Prices and trial duration are supplied by Bazaar, not hardcoded. GitHub Actions publishes a debug APK and an unsigned AAB preflight only; neither is a production release. Checkout remains fail-closed until the owner creates the Pishkhan products, configures Bazaar Developer API and Worker secrets, applies the D1 migration and deploys the Worker. See `docs/CAFEBAZAAR_RELEASE_READINESS.md`.
 
 
 ## Reviewed Android content-rule seed
