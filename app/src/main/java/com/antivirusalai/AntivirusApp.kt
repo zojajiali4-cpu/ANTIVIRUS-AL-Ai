@@ -1,6 +1,7 @@
 package com.antivirusalai
 
 import android.Manifest
+import androidx.activity.ComponentActivity
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
@@ -143,7 +144,23 @@ private enum class AppInventoryConsentAction {
 @Composable
 fun AntivirusApp(inPictureInPicture: Boolean = false) {
     val context = LocalContext.current
+    val activity = context as? ComponentActivity
     val scope = rememberCoroutineScope()
+    var bazaarBillingState by remember { mutableStateOf(BazaarBillingState()) }
+    val bazaarBillingManager = remember(activity) {
+        activity?.let { host ->
+            BazaarBillingManager(host, context.applicationContext) { next ->
+                bazaarBillingState = next
+            }
+        }
+    }
+    DisposableEffect(bazaarBillingManager) {
+        bazaarBillingManager?.connect()
+        onDispose { bazaarBillingManager?.close() }
+    }
+    LaunchedEffect(activeTab, bazaarBillingManager) {
+        if (activeTab == MainTab.STORE.key) bazaarBillingManager?.refresh()
+    }
     val workManager = remember(context) { WorkManager.getInstance(context.applicationContext) }
     val restoredScan = remember(context) { ScanReportStore.load(context.applicationContext) }
     var language by rememberSaveable { mutableStateOf("fa") }
@@ -164,7 +181,6 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
     var deviceScanDeep by remember { mutableStateOf(restoredScan?.deep ?: false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
-    var selectedPlan by remember { mutableStateOf<String?>(null) }
     var featureInfo by remember { mutableStateOf<String?>(null) }
     var showPrivacy by remember { mutableStateOf(false) }
     var showStoragePermissionRationale by remember { mutableStateOf(false) }
@@ -594,6 +610,9 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
                                 deviceScanDeep = deviceScanDeep,
                                 errorMessage = errorMessage,
                                 notice = notice,
+                                premiumAccess = bazaarBillingState.entitled,
+                                cloudAccessToken = bazaarBillingState.cloudAccessToken,
+                                onOpenStore = { activeTab = MainTab.STORE.key },
                                 quarantining = quarantining,
                                 onFileScan = launchFileScan,
                                 onApkScan = launchApkScan,
@@ -632,7 +651,9 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
 
                             MainTab.STORE.key -> StoreScreen(
                                 fa = fa,
-                                onSelectPlan = { selectedPlan = it }
+                                billingState = bazaarBillingState,
+                                onPurchase = { sku -> bazaarBillingManager?.purchase(sku) },
+                                onRestore = { bazaarBillingManager?.restorePurchases() }
                             )
 
                             else -> SettingsScreen(
@@ -678,36 +699,6 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
         }
     }
 
-    selectedPlan?.let { plan ->
-        AlertDialog(
-            onDismissRequest = { selectedPlan = null },
-            containerColor = SurfaceRaised,
-            title = { Text(tr(fa, "فروشگاه ANTIVIRUS AL AI", "ANTIVIRUS AL AI Store"), color = TextPrimary) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                    Text(
-                        tr(fa, "طرح انتخاب‌شده: $plan", "Selected plan: $plan"),
-                        color = BrandTeal,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        tr(
-                            fa,
-                            "پرداخت Google Play و مدیریت اشتراک هنوز متصل نشده‌اند. هیچ مبلغی دریافت یا اشتراکی فعال نمی‌شود. این بخش فعلاً پیش‌نمایش طرح‌هاست.",
-                            "Google Play Billing and subscription management are not connected yet. No payment or subscription activation will occur. This is currently a plan preview."
-                        ),
-                        color = TextSecondary
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = { selectedPlan = null },
-                    colors = ButtonDefaults.buttonColors(containerColor = BrandTeal)
-                ) { Text(tr(fa, "متوجه شدم", "Got it"), color = AppBackground) }
-            }
-        )
-    }
 
     featureInfo?.let { feature ->
         AlertDialog(
@@ -2190,6 +2181,9 @@ private fun ScanCenterScreen(
     deviceScanDeep: Boolean,
     errorMessage: String?,
     notice: String?,
+    premiumAccess: Boolean,
+    cloudAccessToken: String?,
+    onOpenStore: () -> Unit,
     quarantining: Boolean,
     onFileScan: () -> Unit,
     onApkScan: () -> Unit,
@@ -2320,7 +2314,12 @@ private fun ScanCenterScreen(
         }
 
         result?.let {
-            CloudHashReputationCard(result = it, fa = fa)
+            CloudHashReputationCard(
+                result = it, fa = fa,
+                premiumAccess = premiumAccess,
+                cloudAccessToken = cloudAccessToken,
+                onOpenStore = onOpenStore
+            )
         }
 
         if (result == null && batchReport == null && errorMessage == null) {
