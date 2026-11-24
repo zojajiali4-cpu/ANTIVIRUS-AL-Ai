@@ -37,7 +37,15 @@ Run the dependency-free Worker tests with `npm test` from this directory. GitHub
 
 This repository change does not deploy the Worker, create the D1 database, set secrets, populate reputation data, or prove that a live service exists. Configure and test those operational resources in the account owner’s Cloudflare environment before enabling the cloud feature in a release.
 
-## Google Play subscription verification (trial-first regional model)
+## Cafe Bazaar subscription verification (trial-first regional model)
+
+The Android app uses the official Poolakey SDK and two Cafe Bazaar subscription SKUs: alai_plus_monthly and alai_plus_annual. Prices and trial eligibility are obtained from the Bazaar app/Pishkhan; the app never hardcodes price, currency or trial duration. The first-party Worker uses Cafe Bazaar Developer API v2 to validate the purchase token and exact package/SKU. OAuth credentials stay in Worker secrets. The raw purchase token is never persisted; D1 stores only its SHA-256 digest. The Worker issues a five-minute PLUS token for cloud hash reputation.
+
+Set Worker secrets BAZAAR_CLIENT_ID, BAZAAR_CLIENT_SECRET, BAZAAR_REFRESH_TOKEN, BAZAAR_PACKAGE_NAME, BAZAAR_MONTHLY_PRODUCT_ID, BAZAAR_ANNUAL_PRODUCT_ID and PLUS_ENTITLEMENT_HMAC_SECRET. Apply migration 0003_bazaar_billing.sql. Checkout stays disabled until OAuth succeeds and the app also retrieves the real SKU details from Bazaar.
+
+The app uses server-side verification; no Bazaar Developer API credential is packaged in the APK. Test monthly/annual purchase, trial eligibility, cancellation, expiry, restore, invalid tokens, OAuth failure and service outage on a physical device with Cafe Bazaar installed.
+
+## Legacy Google Play subscription verification (not used by Cafe Bazaar build)
 
 The Android app uses one Google Play subscription product, "alai_plus", with two base plans: "monthly" and "annual". Google Play supplies the localized price and only returns offers for which the current Play account is eligible. A free-trial phase is detected from the purchase resource returned by Google; the app does not invent a duration, regional currency, or eligibility decision.
 

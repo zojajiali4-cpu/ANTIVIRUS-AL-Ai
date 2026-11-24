@@ -149,6 +149,8 @@ const PLAY_PUBLISHER_SCOPE = "https://www.googleapis.com/auth/androidpublisher";
 const PLAY_OAUTH_URL = "https://oauth2.googleapis.com/token";
 const PLAY_API_ROOT = "https://androidpublisher.googleapis.com/androidpublisher/v3";
 let cachedPlayAccessToken = null;
+const BAZAAR_API_ROOT = "https://pardakht.cafebazaar.ir";
+let cachedBazaarAccessToken = null;
 
 function base64UrlBytes(bytes) {
   let binary = "";
@@ -387,6 +389,119 @@ async function fetchGoogleSubscriptionPurchase(env, purchaseToken, nowSeconds) {
   };
 }
 
+
+function configuredBazaarProducts(env) {
+  const packageName = env.BAZAAR_PACKAGE_NAME;
+  const monthly = env.BAZAAR_MONTHLY_PRODUCT_ID;
+  const annual = env.BAZAAR_ANNUAL_PRODUCT_ID;
+  if (packageName !== "com.antivirusalai" ||
+      typeof monthly !== "string" || !/^[A-Za-z0-9._-]{3,100}$/.test(monthly) ||
+      typeof annual !== "string" || !/^[A-Za-z0-9._-]{3,100}$/.test(annual) ||
+      monthly === annual) throw Error("BAZAAR_BILLING_NOT_CONFIGURED");
+  return [{ productId: monthly, basePlanId: "monthly" }, { productId: annual, basePlanId: "annual" }];
+}
+
+function isConfiguredPlusPlan(env, productId, basePlanId) {
+  try {
+    return configuredBazaarProducts(env).some(item =>
+      item.productId === productId && item.basePlanId === basePlanId
+    );
+  } catch {
+    const playPlans = String(env.PLAY_SUBSCRIPTION_BASE_PLANS || "")
+      .split(",").map(value => value.trim()).filter(Boolean);
+    return productId === env.PLAY_SUBSCRIPTION_PRODUCT_ID && playPlans.includes(basePlanId);
+  }
+}
+
+async function bazaarJson(response, errorCode) {
+  const contentLength = Number(response.headers.get("content-length") || 0);
+  if (contentLength > 32_768) throw Error(errorCode);
+  let raw;
+  try { raw = await response.text(); } catch { throw Error(errorCode); }
+  if (raw.length > 32_768) throw Error(errorCode);
+  try { return JSON.parse(raw); } catch { throw Error(errorCode); }
+}
+
+async function getBazaarAccessToken(env, nowSeconds) {
+  const clientId = typeof env.BAZAAR_CLIENT_ID === "string" ? env.BAZAAR_CLIENT_ID : "";
+  const clientSecret = typeof env.BAZAAR_CLIENT_SECRET === "string" ? env.BAZAAR_CLIENT_SECRET : "";
+  const refreshToken = typeof env.BAZAAR_REFRESH_TOKEN === "string" ? env.BAZAAR_REFRESH_TOKEN : "";
+  if (!clientId || clientId.length > 512 || !clientSecret || clientSecret.length > 4096 ||
+      !refreshToken || refreshToken.length > 4096) throw Error("BAZAAR_BILLING_NOT_CONFIGURED");
+  const cacheKey = clientId + "|" + clientSecret + "|" + refreshToken;
+  if (cachedBazaarAccessToken?.cacheKey === cacheKey &&
+      cachedBazaarAccessToken.expiresAt > nowSeconds + 60) return cachedBazaarAccessToken.token;
+
+  let response;
+  try {
+    response = await fetch(BAZAAR_API_ROOT + "/devapi/v2/auth/token/", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token", client_id: clientId,
+        client_secret: clientSecret, refresh_token: refreshToken
+      })
+    });
+  } catch { throw Error("BAZAAR_API_UNAVAILABLE"); }
+  if (!response.ok) throw Error(response.status === 401 || response.status === 403
+    ? "BAZAAR_OAUTH_INVALID" : "BAZAAR_API_UNAVAILABLE");
+  const result = await bazaarJson(response, "BAZAAR_API_UNAVAILABLE");
+  const token = typeof result.access_token === "string" ? result.access_token : "";
+  const expiresIn = Number(result.expires_in);
+  if (!token || token.length > 8192 || !Number.isFinite(expiresIn) || expiresIn < 60) {
+    throw Error("BAZAAR_API_UNAVAILABLE");
+  }
+  cachedBazaarAccessToken = {
+    cacheKey, token, expiresAt: nowSeconds + Math.min(expiresIn, 3600)
+  };
+  return token;
+}
+
+async function fetchBazaarSubscriptionConfiguration(env, nowSeconds) {
+  if (!isPlusSigningSecretConfigured(env)) throw Error("PLUS_ENTITLEMENT_SIGNING_NOT_CONFIGURED");
+  const products = configuredBazaarProducts(env);
+  await getBazaarAccessToken(env, nowSeconds);
+  return { packageName: env.BAZAAR_PACKAGE_NAME, activeProducts: products.map(item => item.productId) };
+}
+
+async function fetchBazaarSubscriptionPurchase(env, productId, purchaseToken, nowSeconds) {
+  const products = configuredBazaarProducts(env);
+  const product = products.find(item => item.productId === productId);
+  if (!product) throw Error("BAZAAR_PRODUCT_MISMATCH");
+  const accessToken = await getBazaarAccessToken(env, nowSeconds);
+  const url = BAZAAR_API_ROOT + "/devapi/v2/api/applications/" +
+    encodeURIComponent(env.BAZAAR_PACKAGE_NAME) + "/subscriptions/" +
+    encodeURIComponent(productId) + "/purchases/" + encodeURIComponent(purchaseToken) +
+    "/?access_token=" + encodeURIComponent(accessToken);
+  let response;
+  try {
+    response = await fetch(url, { method: "GET", headers: { accept: "application/json" } });
+  } catch { throw Error("BAZAAR_API_UNAVAILABLE"); }
+  if (response.status === 404) throw Error("BAZAAR_PURCHASE_TOKEN_INVALID");
+  if (response.status === 401 || response.status === 403) throw Error("BAZAAR_OAUTH_INVALID");
+  if (!response.ok) throw Error("BAZAAR_API_UNAVAILABLE");
+  const purchase = await bazaarJson(response, "BAZAAR_API_UNAVAILABLE");
+  if (purchase.error || purchase.error_description) {
+    if (/not found|invalid.*token|purchase.*not.*found/i.test(
+      String(purchase.error_description || purchase.error || ""))) {
+      throw Error("BAZAAR_PURCHASE_TOKEN_INVALID");
+    }
+    throw Error("BAZAAR_API_UNAVAILABLE");
+  }
+  if (purchase.kind !== "androidpublisher#subscriptionPurchase") throw Error("BAZAAR_PURCHASE_INVALID");
+  const initiationMillis = Number(purchase.initiationTimestampMsec);
+  const expiryMillis = Number(purchase.validUntilTimestampMsec);
+  if (!Number.isSafeInteger(expiryMillis) || expiryMillis <= 0 ||
+      !Number.isSafeInteger(initiationMillis) || initiationMillis <= 0 ||
+      initiationMillis > expiryMillis) throw Error("BAZAAR_PURCHASE_INVALID");
+  const entitled = expiryMillis > nowSeconds * 1000;
+  return {
+    entitled, state: entitled ? "SUBSCRIPTION_STATE_ACTIVE" : "SUBSCRIPTION_STATE_EXPIRED",
+    expiryMillis, initiationMillis, productId, basePlanId: product.basePlanId,
+    isTrial: false, autoRenewing: purchase.autoRenewing === true
+  };
+}
+
 async function sha256Hex(value) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("");
@@ -422,12 +537,9 @@ async function issuePlusAccessToken(env, verified, nowSeconds) {
     "SUBSCRIPTION_STATE_ACTIVE", "SUBSCRIPTION_STATE_IN_GRACE_PERIOD",
     "SUBSCRIPTION_STATE_CANCELED"
   ]);
-  const allowedPlans = String(env.PLAY_SUBSCRIPTION_BASE_PLANS || "")
-    .split(",").map(value => value.trim()).filter(Boolean);
   const subscriptionExpiresAt = Math.floor(verified.expiryMillis / 1000);
   if (!verified.entitled || !allowedStates.has(verified.state) ||
-      verified.productId !== env.PLAY_SUBSCRIPTION_PRODUCT_ID ||
-      !allowedPlans.includes(verified.basePlanId) ||
+      !isConfiguredPlusPlan(env, verified.productId, verified.basePlanId) ||
       !Number.isSafeInteger(subscriptionExpiresAt) || subscriptionExpiresAt <= nowSeconds) {
     throw Error("PLUS_ENTITLEMENT_NOT_ACTIVE");
   }
@@ -473,8 +585,6 @@ async function verifyPlusAccessToken(req, env, nowSeconds) {
     "HMAC", key, signature, new TextEncoder().encode(parts[0])
   );
   if (!validSignature) return false;
-  const configuredPlans = String(env.PLAY_SUBSCRIPTION_BASE_PLANS || "")
-    .split(",").map(value => value.trim()).filter(Boolean);
   const allowedStates = new Set([
     "SUBSCRIPTION_STATE_ACTIVE", "SUBSCRIPTION_STATE_IN_GRACE_PERIOD",
     "SUBSCRIPTION_STATE_CANCELED"
@@ -482,8 +592,7 @@ async function verifyPlusAccessToken(req, env, nowSeconds) {
   const { v, aud, productId, basePlanId, subscriptionState,
     subscriptionExpiresAt, iat, exp } = claims || {};
   if (v !== 1 || aud !== PLUS_ACCESS_AUDIENCE ||
-      productId !== env.PLAY_SUBSCRIPTION_PRODUCT_ID ||
-      !configuredPlans.includes(basePlanId) || !allowedStates.has(subscriptionState) ||
+      !isConfiguredPlusPlan(env, productId, basePlanId) || !allowedStates.has(subscriptionState) ||
       !Number.isSafeInteger(iat) || !Number.isSafeInteger(exp) ||
       !Number.isSafeInteger(subscriptionExpiresAt) ||
       iat > nowSeconds + 30 || exp <= nowSeconds || exp <= iat ||
@@ -612,6 +721,59 @@ export default { async fetch(req,env){
      return out({error:"BILLING_VERIFICATION_UNAVAILABLE"},503);
    }
  }
+
+
+  if(p==="/v1/bazaar/status"&&req.method==="GET"){
+    try {
+      const configuration=await fetchBazaarSubscriptionConfiguration(env,Math.floor(Date.now()/1000));
+      return out({ok:true,checkoutReady:true,activeProducts:configuration.activeProducts});
+    } catch(error) {
+      const code=error?.message||"";
+      if(code==="BAZAAR_BILLING_NOT_CONFIGURED"||code==="BAZAAR_OAUTH_INVALID"||
+         code==="PLUS_ENTITLEMENT_SIGNING_NOT_CONFIGURED") {
+        return out({ok:true,checkoutReady:false,activeProducts:[],reason:"NOT_CONFIGURED"});
+      }
+      return out({ok:false,checkoutReady:false,activeProducts:[],error:"BAZAAR_VERIFICATION_UNAVAILABLE"},503);
+    }
+  }
+  if(p==="/v1/bazaar/subscription/verify"&&req.method==="POST"){
+    try {
+      const x=await body(req,16_384);
+      const token=typeof x.purchaseToken==="string"?x.purchaseToken:"";
+      const requestedProduct=typeof x.productId==="string"?x.productId:"";
+      if(token.length<20||token.length>4096||/[\\s\\x00-\\x1f\\x7f]/.test(token)) {
+        return out({error:"INVALID_PURCHASE_TOKEN"},400);
+      }
+      const products=configuredBazaarProducts(env);
+      if(!isPlusSigningSecretConfigured(env)||!env.BAZAAR_CLIENT_ID||
+         !env.BAZAAR_CLIENT_SECRET||!env.BAZAAR_REFRESH_TOKEN) {
+        return out({error:"BILLING_NOT_CONFIGURED"},503);
+      }
+      if(!products.some(item=>item.productId===requestedProduct)) return out({error:"PRODUCT_NOT_ALLOWED"},400);
+      const nowSeconds=Math.floor(Date.now()/1000);
+      const verified=await fetchBazaarSubscriptionPurchase(env,requestedProduct,token,nowSeconds);
+      const tokenHash=await sha256Hex(token);
+      const nowMillis=Date.now();
+      await env.DB.prepare(
+        "INSERT INTO bazaar_billing_verifications(purchase_token_sha256,product_id,base_plan_id,subscription_state,expires_at,auto_renewing,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(purchase_token_sha256) DO UPDATE SET product_id=excluded.product_id,base_plan_id=excluded.base_plan_id,subscription_state=excluded.subscription_state,expires_at=excluded.expires_at,auto_renewing=excluded.auto_renewing,updated_at=excluded.updated_at"
+      ).bind(tokenHash,verified.productId,verified.basePlanId,verified.state,
+        Math.floor(verified.expiryMillis/1000),verified.autoRenewing?1:0,nowMillis,nowMillis).run();
+      const cloudAccessToken=verified.entitled?await issuePlusAccessToken(env,verified,nowSeconds):null;
+      return out({ok:true,entitled:verified.entitled,subscriptionState:verified.state,
+        productId:verified.productId,basePlanId:verified.basePlanId,isTrial:false,
+        expiresAtEpochMillis:verified.expiryMillis,autoRenewing:verified.autoRenewing,cloudAccessToken});
+    } catch(error) {
+      const code=error?.message||"";
+      if(code==="BODY_TOO_LARGE"||code==="INVALID_UTF8"||code==="INVALID_JSON") return out({error:code},400);
+      if(code==="BAZAAR_PURCHASE_TOKEN_INVALID") return out({error:"INVALID_PURCHASE_TOKEN"},400);
+      if(code==="BAZAAR_PRODUCT_MISMATCH") return out({error:"PURCHASE_PRODUCT_MISMATCH"},400);
+      if(code==="BAZAAR_PURCHASE_INVALID") return out({error:"PURCHASE_NOT_ENTITLED"},200);
+      if(code==="BAZAAR_BILLING_NOT_CONFIGURED"||code==="PLUS_ENTITLEMENT_SIGNING_NOT_CONFIGURED"||code==="BAZAAR_OAUTH_INVALID") {
+        return out({error:"BILLING_NOT_CONFIGURED"},503);
+      }
+      return out({error:"BILLING_VERIFICATION_UNAVAILABLE"},503);
+    }
+  }
 
  if(p==="/v1/threat-feed/latest"&&req.method==="GET"){
    try{

@@ -18,6 +18,7 @@ function makeD1({ fail = false } = {}) {
   const feeds = new Map();
   const statements = [];
   const billingVerifications = new Map();
+  const bazaarBillingVerifications = new Map();
   return {
     statements,
     prepare(sql) {
@@ -45,6 +46,12 @@ function makeD1({ fail = false } = {}) {
           billingVerifications.set(params[0], {
             token_hash: params[0], product_id: params[1], base_plan_id: params[2],
             subscription_state: params[3], expires_at: params[4], is_trial: params[5],
+            created_at: params[6], updated_at: params[7]
+          });
+        } else if (sql.startsWith("INSERT INTO bazaar_billing_verifications")) {
+          bazaarBillingVerifications.set(params[0], {
+            token_hash: params[0], product_id: params[1], base_plan_id: params[2],
+            subscription_state: params[3], expires_at: params[4], auto_renewing: params[5],
             created_at: params[6], updated_at: params[7]
           });
         }
@@ -371,6 +378,51 @@ async function withPlayApi(purchase, callback, {
   try { return await callback(calls); }
   finally { globalThis.fetch = originalFetch; }
 }
+
+function bazaarBillingEnvironment(db = makeD1()) {
+  return {
+    DB: db, RATE_SALT, PLUS_ENTITLEMENT_HMAC_SECRET,
+    BAZAAR_PACKAGE_NAME: "com.antivirusalai",
+    BAZAAR_CLIENT_ID: "bazaar-test-client",
+    BAZAAR_CLIENT_SECRET: "bazaar-test-client-secret",
+    BAZAAR_REFRESH_TOKEN: "bazaar-test-refresh-token",
+    BAZAAR_MONTHLY_PRODUCT_ID: "alai_plus_monthly",
+    BAZAAR_ANNUAL_PRODUCT_ID: "alai_plus_annual"
+  };
+}
+async function withBazaarApi(subscription, callback, { oauthStatus = 200, subscriptionStatus = 200 } = {}) {
+  const originalFetch = globalThis.fetch;
+  const previousCache = cachedBazaarAccessToken;
+  const calls = [];
+  cachedBazaarAccessToken = null;
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    calls.push({ url, method: init.method || "GET", body: init.body?.toString?.() || "" });
+    if (url.endsWith("/devapi/v2/auth/token/")) {
+      return new Response(JSON.stringify({ access_token: "bazaar-test-access-token", expires_in: 3600 }), {
+        status: oauthStatus, headers: { "content-type": "application/json" }
+      });
+    }
+    if (url.includes("/subscriptions/alai_plus_monthly/purchases/") ||
+        url.includes("/subscriptions/alai_plus_annual/purchases/")) {
+      return new Response(JSON.stringify(subscription || {}), {
+        status: subscriptionStatus, headers: { "content-type": "application/json" }
+      });
+    }
+    throw new Error("Unexpected Cafe Bazaar API request: " + url);
+  };
+  try { return await callback(calls); }
+  finally { globalThis.fetch = originalFetch; cachedBazaarAccessToken = previousCache; }
+}
+function bazaarSubscriptionFixture(overrides = {}) {
+  return {
+    kind: "androidpublisher#subscriptionPurchase",
+    initiationTimestampMsec: Date.now() - 60_000,
+    validUntilTimestampMsec: Date.now() + 7 * 24 * 60 * 60 * 1000,
+    autoRenewing: true,
+    ...overrides
+  };
+}
 function subscriptionFixture(overrides = {}) {
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
   return {
@@ -671,4 +723,99 @@ test("billing readiness never reports configured when the service account is mis
   const result = await json(response);
   assert.equal(result.checkoutReady, false);
   assert.deepEqual(result.activeBasePlans, []);
+});
+
+test("Cafe Bazaar readiness stays closed when OAuth or required configuration is missing", async () => {
+  const env = bazaarBillingEnvironment();
+  delete env.BAZAAR_REFRESH_TOKEN;
+  const response = await worker.fetch(request("/v1/bazaar/status"), env);
+  assert.equal(response.status, 200);
+  const result = await json(response);
+  assert.equal(result.checkoutReady, false);
+  assert.deepEqual(result.activeProducts, []);
+});
+
+test("Cafe Bazaar readiness requires a valid Developer API OAuth token and exposes only the two configured SKUs", async () => {
+  await withBazaarApi(null, async calls => {
+    const response = await worker.fetch(request("/v1/bazaar/status"), bazaarBillingEnvironment());
+    assert.equal(response.status, 200);
+    const result = await json(response);
+    assert.equal(result.checkoutReady, true);
+    assert.deepEqual(result.activeProducts, ["alai_plus_monthly", "alai_plus_annual"]);
+    assert.ok(calls.some(call => call.method === "POST" && call.url.endsWith("/devapi/v2/auth/token/")));
+    assert.match(calls[0].body, /grant_type=refresh_token/);
+  });
+});
+
+test("Cafe Bazaar subscription verification checks exact SKU and expiry, stores only token digest and issues PLUS token", async () => {
+  const db = makeD1(), env = bazaarBillingEnvironment(db);
+  const purchaseToken = "bazaar-purchase-token-123456789012345";
+  await withBazaarApi(bazaarSubscriptionFixture(), async calls => {
+    const response = await worker.fetch(request("/v1/bazaar/subscription/verify", {
+      productId: "alai_plus_monthly", purchaseToken
+    }), env);
+    assert.equal(response.status, 200);
+    const result = await json(response);
+    assert.equal(result.entitled, true);
+    assert.equal(result.basePlanId, "monthly");
+    assert.equal(result.isTrial, false);
+    assert.equal(typeof result.cloudAccessToken, "string");
+    assert.ok(calls.some(call => call.url.includes("/subscriptions/alai_plus_monthly/purchases/")));
+    const hashCheck = await worker.fetch(request("/v1/hash/reputation", {
+      sha256: "c".repeat(64)
+    }, plusAuthorization(result.cloudAccessToken)), env);
+    assert.equal(hashCheck.status, 200);
+  });
+  const insert = db.statements.find(item => item.sql.startsWith("INSERT INTO bazaar_billing_verifications"));
+  assert.ok(insert);
+  assert.notEqual(insert.params[0], purchaseToken);
+  assert.equal(insert.params.includes(purchaseToken), false);
+  assert.match(insert.params[0], /^[a-f0-9]{64}$/);
+});
+
+test("Cafe Bazaar verification never grants expired subscription access", async () => {
+  const expired = bazaarSubscriptionFixture({ validUntilTimestampMsec: Date.now() - 60_000 });
+  await withBazaarApi(expired, async () => {
+    const response = await worker.fetch(request("/v1/bazaar/subscription/verify", {
+      productId: "alai_plus_monthly", purchaseToken: "bazaar-expired-token-123456789012"
+    }), bazaarBillingEnvironment());
+    assert.equal(response.status, 200);
+    const result = await json(response);
+    assert.equal(result.entitled, false);
+    assert.equal(result.cloudAccessToken, null);
+  });
+});
+
+test("Cafe Bazaar verification rejects unknown SKUs and invalid purchase tokens", async () => {
+  const env = bazaarBillingEnvironment();
+  const wrongSku = await worker.fetch(request("/v1/bazaar/subscription/verify", {
+    productId: "attacker_sku", purchaseToken: "bazaar-purchase-token-123456789012"
+  }), env);
+  assert.equal(wrongSku.status, 400);
+  assert.equal((await json(wrongSku)).error, "PRODUCT_NOT_ALLOWED");
+  const invalidToken = await worker.fetch(request("/v1/bazaar/subscription/verify", {
+    productId: "alai_plus_monthly", purchaseToken: "short"
+  }), env);
+  assert.equal(invalidToken.status, 400);
+  assert.equal((await json(invalidToken)).error, "INVALID_PURCHASE_TOKEN");
+});
+
+test("Cafe Bazaar verification fails closed when Developer API rejects OAuth credentials", async () => {
+  await withBazaarApi(null, async () => {
+    const response = await worker.fetch(request("/v1/bazaar/subscription/verify", {
+      productId: "alai_plus_monthly", purchaseToken: "bazaar-purchase-token-123456789012"
+    }), bazaarBillingEnvironment());
+    assert.equal(response.status, 503);
+    assert.equal((await json(response)).error, "BILLING_NOT_CONFIGURED");
+  }, { oauthStatus: 401 });
+});
+
+test("Cafe Bazaar verification maps unknown tokens to invalid purchase", async () => {
+  await withBazaarApi({}, async () => {
+    const response = await worker.fetch(request("/v1/bazaar/subscription/verify", {
+      productId: "alai_plus_monthly", purchaseToken: "bazaar-purchase-token-123456789012"
+    }), bazaarBillingEnvironment());
+    assert.equal(response.status, 400);
+    assert.equal((await json(response)).error, "INVALID_PURCHASE_TOKEN");
+  }, { subscriptionStatus: 404 });
 });
