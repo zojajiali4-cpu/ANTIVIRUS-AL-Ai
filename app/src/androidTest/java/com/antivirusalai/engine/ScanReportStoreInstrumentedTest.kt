@@ -1,6 +1,7 @@
 package com.antivirusalai.engine
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -97,5 +98,30 @@ class ScanReportStoreInstrumentedTest {
         assertEquals(emptyList<String>(), restored.mlTopFeatures)
         assertNull(restored.staticAnalysis)
         assertNull(restored.unknownFileCase)
+    }
+    @Test
+    fun scanReportRoundTripPreservesAggregateCoverageMatrix() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        ScanReportStore.clear(context)
+        val expected = listOf(
+            ScanCoverageCell("APK", ScanVerdict.KNOWN_MALWARE, 2),
+            ScanCoverageCell("application/pdf", ScanVerdict.UNSUPPORTED_FILE, 1)
+        )
+        val report = FolderScanReport(
+            items = emptyList(),
+            failures = emptyList(),
+            discoveredFiles = 3,
+            skippedFiles = 0,
+            truncated = false,
+            scannedCountOverride = 3,
+            coverageMatrix = expected
+        )
+
+        ScanReportStore.save(context, deep = true, report = report)
+        val restored = ScanReportStore.load(context)
+
+        assertNotNull(restored)
+        assertEquals(expected, restored!!.report.coverageMatrix)
+        ScanReportStore.clear(context)
     }
 }
