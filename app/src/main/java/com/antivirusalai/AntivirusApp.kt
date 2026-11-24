@@ -134,6 +134,15 @@ private enum class MainTab(val key: String) {
     VAULT("vault")
 }
 
+private fun findComponentActivity(context: android.content.Context): androidx.activity.ComponentActivity? {
+    var current: android.content.Context? = context
+    while (current != null) {
+        if (current is androidx.activity.ComponentActivity) return current
+        current = (current as? android.content.ContextWrapper)?.baseContext
+    }
+    return null
+}
+
 private enum class AppInventoryConsentAction {
     DEVICE_SCAN,
     PROTECTION,
@@ -143,11 +152,24 @@ private enum class AppInventoryConsentAction {
 @Composable
 fun AntivirusApp(inPictureInPicture: Boolean = false) {
     val context = LocalContext.current
+    var billingUiState by remember { mutableStateOf(BazaarBillingUiState()) }
+    val billingActivity = findComponentActivity(context)
+    val billingManager = remember(billingActivity) {
+        billingActivity?.let { activity ->
+            BazaarBillingManager(context, activity.activityResultRegistry) { state -> billingUiState = state }
+        }
+    }
+    DisposableEffect(billingManager) {
+        onDispose { billingManager?.close() }
+    }
     val scope = rememberCoroutineScope()
     val workManager = remember(context) { WorkManager.getInstance(context.applicationContext) }
     val restoredScan = remember(context) { ScanReportStore.load(context.applicationContext) }
     var language by rememberSaveable { mutableStateOf("fa") }
     var activeTab by rememberSaveable { mutableStateOf(MainTab.HOME.key) }
+    LaunchedEffect(activeTab) {
+        if (activeTab == MainTab.STORE.key) billingManager?.connect()
+    }
     var scanning by remember { mutableStateOf(false) }
     var quarantining by remember { mutableStateOf(false) }
     var showQuarantineConfirmation by remember { mutableStateOf(false) }
@@ -164,7 +186,6 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
     var deviceScanDeep by remember { mutableStateOf(restoredScan?.deep ?: false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
-    var selectedPlan by remember { mutableStateOf<String?>(null) }
     var featureInfo by remember { mutableStateOf<String?>(null) }
     var showPrivacy by remember { mutableStateOf(false) }
     var showStoragePermissionRationale by remember { mutableStateOf(false) }
@@ -594,6 +615,9 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
                                 deviceScanDeep = deviceScanDeep,
                                 errorMessage = errorMessage,
                                 notice = notice,
+                                premiumAccess = billingUiState.entitled,
+                                cloudAccessToken = billingUiState.cloudAccessToken,
+                                onOpenStore = { activeTab = MainTab.STORE.key },
                                 quarantining = quarantining,
                                 onFileScan = launchFileScan,
                                 onApkScan = launchApkScan,
@@ -632,7 +656,9 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
 
                             MainTab.STORE.key -> StoreScreen(
                                 fa = fa,
-                                onSelectPlan = { selectedPlan = it }
+                                billingState = billingUiState,
+                                onPurchase = { basePlan -> billingManager?.launchPlan(basePlan) },
+                                onRestore = { billingManager?.restorePurchases() }
                             )
 
                             else -> SettingsScreen(
@@ -676,37 +702,6 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
                 }
             }
         }
-    }
-
-    selectedPlan?.let { plan ->
-        AlertDialog(
-            onDismissRequest = { selectedPlan = null },
-            containerColor = SurfaceRaised,
-            title = { Text(tr(fa, "فروشگاه ANTIVIRUS AL AI", "ANTIVIRUS AL AI Store"), color = TextPrimary) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                    Text(
-                        tr(fa, "طرح انتخاب‌شده: $plan", "Selected plan: $plan"),
-                        color = BrandTeal,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        tr(
-                            fa,
-                            "پرداخت Google Play و مدیریت اشتراک هنوز متصل نشده‌اند. هیچ مبلغی دریافت یا اشتراکی فعال نمی‌شود. این بخش فعلاً پیش‌نمایش طرح‌هاست.",
-                            "Google Play Billing and subscription management are not connected yet. No payment or subscription activation will occur. This is currently a plan preview."
-                        ),
-                        color = TextSecondary
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = { selectedPlan = null },
-                    colors = ButtonDefaults.buttonColors(containerColor = BrandTeal)
-                ) { Text(tr(fa, "متوجه شدم", "Got it"), color = AppBackground) }
-            }
-        )
     }
 
     featureInfo?.let { feature ->
@@ -940,8 +935,8 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
                 Text(
                     tr(
                         fa,
-                        "اسکن دستگاه فقط پس از شروع توسط کاربر انجام می‌شود. فهرست برنامه‌های نصب‌شده فقط پس از رضایت جداگانه و قابل‌لغو از تنظیمات برنامه بررسی می‌شود؛ نام بسته‌ها و مسیر APKهای قابل‌خواندن فقط روی دستگاه پردازش می‌شوند و به سرور یا سامانه تبلیغاتی ارسال نمی‌شوند. اسکن گسترده حافظه مشترک به مجوز جداگانه «مدیریت همه فایل‌ها» در Android نیاز دارد. Android همچنان پوشه‌های خصوصی برنامه‌های دیگر و Android/data و Android/obb را مسدود می‌کند. استعلام آنلاین هش نیز فقط پس از تأیید جداگانه، اثرانگشت SHA-256 را می‌فرستد؛ محتوای فایل، نام و مسیر آن ارسال نمی‌شوند. قرنطینه ابتدا نسخه رمزنگاری‌شده را راستی‌آزمایی می‌کند و حذف فایل مبدأ عملی جداگانه و نیازمند تأیید کاربر است.",
-                        "Device scans start only when requested by the user. Installed-app inventory is inspected only after separate, revocable consent in app settings; package names and readable APK paths are processed locally and are not sent to a server or advertising system. Broad shared-storage scanning requires the separate Android All files access setting. Android still blocks other apps' private folders and Android/data and Android/obb. Optional online hash reputation sends only the SHA-256 digest after separate confirmation; file contents, name and path are not sent. Quarantine verifies the encrypted copy first, and source deletion is a separate user-confirmed action."
+                        "اسکن محلی فقط با درخواست کاربر آغاز می‌شود. فهرست برنامه‌های نصب‌شده تنها پس از رضایت جداگانه و قابل‌لغو بررسی می‌شود و نام بسته‌ها و مسیر APKهای قابل‌خواندن روی دستگاه پردازش می‌شوند. اسکن گسترده حافظه مشترک به مجوز جداگانه «مدیریت همه فایل‌ها» نیاز دارد؛ Android دسترسی به داده خصوصی برنامه‌های دیگر و مسیرهای Android/data و Android/obb را محدود می‌کند. اگر بررسی ابری URL را انتخاب کنی، همان URL برای تحلیل ساختاری و بررسی اعتبار به سرور امن ارسال می‌شود؛ سرور URL را باز یا دریافت نمی‌کند. استعلام ابری هش PLUS فقط پس از تأیید جداگانه، هش SHA-256 و توکن کوتاه‌عمر اشتراک را ارسال می‌کند؛ محتوای فایل، نام و مسیر آن ارسال نمی‌شوند. برای تأیید خرید اشتراک، توکن خرید و شناسه محصول به سرور ما ارسال می‌شود تا از API رسمی کافه‌بازار استعلام شود؛ اطلاعات کارت بانکی در اختیار برنامه قرار نمی‌گیرد. سرور فقط هش توکن خرید و فراداده حداقلی اشتراک را ذخیره می‌کند. فراداده اتصال مانند IP ممکن است برای محدودسازی درخواست پردازش شود. اسکن‌ها، گزارش‌ها و قرنطینه محلی در فضای خصوصی برنامه نگهداری می‌شوند. قرنطینه نسخه رمزنگاری‌شده را راستی‌آزمایی می‌کند و حذف فایل مبدأ جداگانه و نیازمند تأیید کاربر است.",
+                        "Local scans start only when requested by the user. Installed-app inventory is inspected only after separate, revocable consent; package names and readable APK paths are processed on-device. Broad shared-storage scanning requires Android's separate All files access setting; Android restricts other apps' private data and Android/data and Android/obb. If the user chooses cloud URL analysis, that URL is sent over HTTPS for structural and curated-reputation checks; the server does not open or fetch it. Optional PLUS hash reputation sends the SHA-256 digest and a short-lived subscription token only after separate confirmation; file contents, filename and path are not sent. To verify a subscription, the purchase token and product ID are sent to our server for validation with Cafe Bazaar Developer API; the app does not receive payment-card details. The server stores only a hash of the purchase token and minimal subscription metadata. Connection metadata such as IP may be processed for rate limiting. Scan reports and quarantine entries are stored in the app's private local storage. Quarantine verifies the encrypted copy first; deleting the original file is a separate user-confirmed action."
                     ),
                     color = TextSecondary
                 )
@@ -2190,6 +2185,9 @@ private fun ScanCenterScreen(
     deviceScanDeep: Boolean,
     errorMessage: String?,
     notice: String?,
+    premiumAccess: Boolean,
+    cloudAccessToken: String?,
+    onOpenStore: () -> Unit,
     quarantining: Boolean,
     onFileScan: () -> Unit,
     onApkScan: () -> Unit,
@@ -2320,7 +2318,12 @@ private fun ScanCenterScreen(
         }
 
         result?.let {
-            CloudHashReputationCard(result = it, fa = fa)
+            CloudHashReputationCard(
+                result = it, fa = fa,
+                premiumAccess = premiumAccess,
+                cloudAccessToken = cloudAccessToken,
+                onOpenStore = onOpenStore
+            )
         }
 
         if (result == null && batchReport == null && errorMessage == null) {
@@ -3209,102 +3212,89 @@ private fun QuarantineVaultScreen(
 }
 
 @Composable
-private fun StoreScreen(
-    fa: Boolean,
-    onSelectPlan: (String) -> Unit
-) {
+private fun StoreScreen(fa: Boolean, billingState: BazaarBillingUiState, onPurchase: (String) -> Unit, onRestore: () -> Unit) {
+    val monthly = billingState.offers.firstOrNull { it.productId == BuildConfig.ALAI_MONTHLY_PRODUCT_ID }
+    val annual = billingState.offers.firstOrNull { it.productId == BuildConfig.ALAI_ANNUAL_PRODUCT_ID }
+    val expiryText = billingState.expiresAtEpochMillis?.let { java.text.DateFormat.getDateInstance().format(java.util.Date(it)) }
     Column(verticalArrangement = Arrangement.spacedBy(15.dp)) {
         Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-            EyebrowLabel(tr(fa, "طرح‌های عضویت", "MEMBERSHIP"))
+            EyebrowLabel(tr(fa, "عضویت و دوره آزمایشی", "MEMBERSHIP & FREE TRIAL"))
             Text(tr(fa, "فروشگاه", "Store"), color = TextPrimary, fontSize = 25.sp, fontWeight = FontWeight.Bold)
-            Text(
-                tr(fa, "امکانات تکمیلی برای نیازهای مختلف", "Plans for different security needs"),
-                color = TextSecondary,
-                fontSize = 12.sp
-            )
+            Text(tr(fa, "پرداخت امن و قیمت‌گذاری از طریق کافه‌بازار انجام می‌شود.", "Secure checkout and localized pricing are provided by Cafe Bazaar."),
+                color = TextSecondary, fontSize = 12.sp)
         }
-
         InfoBanner(
-            title = tr(fa, "پرداخت هنوز فعال نیست", "Checkout is not active"),
-            body = tr(
-                fa,
-                "این نسخه کاتالوگ طرح‌ها را نشان می‌دهد. پرداخت Google Play، قیمت‌گذاری منطقه‌ای و مدیریت اشتراک هنوز متصل نشده‌اند؛ هیچ مبلغی دریافت نمی‌شود.",
-                "This version displays the plan catalogue only. Google Play Billing, regional pricing and subscription management are not connected. No payment will be taken."
-            ),
-            warning = true
+            title = when {
+                billingState.entitled -> tr(fa, "اشتراک تأییدشده فعال است", "Verified subscription is active")
+                billingState.trialEligible && billingState.trialPeriodDays > 0 -> tr(fa, "دوره آزمایشی در دسترس است", "Trial may be available")
+                billingState.checkoutReady -> tr(fa, "طرح‌های اشتراک آماده‌اند", "Subscription plans are available")
+                else -> tr(fa, "خرید فعلاً در دسترس نیست", "Checkout is not currently available")
+            },
+            body = when {
+                billingState.entitled -> tr(fa, "اشتراک شما تا " + (expiryText ?: "زمان تأییدشده توسط بازار") + " معتبر است. وضعیت خرید از سرویس رسمی بازار استعلام شده است.",
+                    "Your subscription is verified until " + (expiryText ?: "the expiry confirmed by Bazaar") + ".")
+                billingState.trialEligible && billingState.trialPeriodDays > 0 -> tr(fa, "بازار برای حساب شما امکان دوره آزمایشی تا " + billingState.trialPeriodDays + " روز را گزارش کرده است. شرایط نهایی و زمان اولین پرداخت را پیش از تأیید در صفحه پرداخت بازار بررسی کن.",
+                    "Bazaar reports trial eligibility for up to " + billingState.trialPeriodDays + " days. Review final terms and the first charge date in Bazaar checkout.")
+                billingState.checkoutReady -> tr(fa, "قیمت نهایی و شرایط تمدید در صفحه امن پرداخت بازار نمایش داده می‌شود. هیچ قیمت یا مدت آزمایشی در برنامه حدس زده نمی‌شود.",
+                    "Final price and renewal terms are shown in Bazaar's secure checkout.")
+                else -> tr(fa, "محصولات بازار یا اعتبارسنجی سمت سرور هنوز پیکربندی نشده‌اند. هیچ پرداخت یا دسترسی ویژه‌ای فعال نمی‌شود؛ اسکن پایه همچنان رایگان است.",
+                    "Bazaar products or server verification are not configured yet. No payment or premium access is enabled; core scanning remains free.")
+            },
+            warning = !billingState.entitled && !billingState.checkoutReady
         )
+        PlanCard(fa = fa, name = "FREE", subtitle = tr(fa, "امنیت پایه، بدون هزینه", "Essential protection, no cost"),
+            price = tr(fa, "رایگان", "Free"), badge = tr(fa, "همیشه رایگان", "ALWAYS FREE"), highlighted = true,
+            features = listOf(tr(fa, "اسکن انتخابی فایل و تحلیل پایه APK", "Selected-file scanning and basic APK analysis"),
+                tr(fa, "گزارش شفاف با نمایش شواهد", "Transparent evidence-based reports"),
+                tr(fa, "قرنطینه رمزنگاری‌شده در فضای خصوصی", "Encrypted quarantine in private app storage"),
+                tr(fa, "پردازش محلی بدون آپلود محتوای فایل", "Local processing without file-content uploads")),
+            enabled = false, onSelect = {})
+        BazaarPlanCard(fa, tr(fa, "PLUS ماهانه", "PLUS MONTHLY"), monthly, "monthly" in billingState.activeBasePlans,
+            billingState.entitled, billingState.loading, billingState.trialEligible) { onPurchase(BuildConfig.ALAI_MONTHLY_PRODUCT_ID) }
+        BazaarPlanCard(fa, tr(fa, "PLUS سالانه", "PLUS ANNUAL"), annual, "annual" in billingState.activeBasePlans,
+            billingState.entitled, billingState.loading, billingState.trialEligible) { onPurchase(BuildConfig.ALAI_ANNUAL_PRODUCT_ID) }
+        InfoBanner(title = tr(fa, "شفافیت تمدید و لغو", "Renewal and cancellation transparency"),
+            body = tr(fa, "اگر دوره آزمایشی و تمدید خودکار برای محصول فعال شده باشد، شرایط، مبلغ و زمان اولین پرداخت در صفحه تأیید کافه‌بازار نمایش داده می‌شود. مدیریت و لغو اشتراک از حساب کاربری بازار انجام می‌شود.",
+                "If a trial and auto-renewal are configured, Bazaar checkout displays the terms, amount and first charge date. Manage or cancel from your Cafe Bazaar account."),
+            warning = true)
+        billingState.message?.let { InfoBanner(title = tr(fa, "وضعیت فروشگاه", "Store status"), body = it, warning = !billingState.entitled) }
+        OutlinedButton(onClick = onRestore, modifier = Modifier.fillMaxWidth(), enabled = billingState.connected && !billingState.loading) {
+            Text(tr(fa, "بازیابی خریدها", "Restore purchases"))
+        }
+    }
+}
 
-        PlanCard(
-            fa = fa,
-            name = "FREE",
-            subtitle = tr(fa, "امنیت پایه، بدون هزینه", "Essential protection, no cost"),
-            price = tr(fa, "رایگان", "Free"),
-            badge = tr(fa, "طرح فعلی", "CURRENT"),
-            highlighted = true,
-            features = listOf(
-                tr(fa, "اسکن سریع انتخابی و تحلیل پایه APK", "Selected-file scan and basic APK analysis"),
-                tr(fa, "گزارش شفاف و نمایش شواهد", "Transparent reports and evidence"),
-                tr(fa, "ذخیره نسخه رمزنگاری‌شده فایل", "Encrypted private copy"),
-                tr(fa, "پردازش محلی بدون آپلود محتوا", "Local processing without content uploads")
-            ),
-            onSelect = { onSelectPlan("FREE") }
-        )
-        PlanCard(
-            fa = fa,
-            name = "PLUS",
-            subtitle = tr(fa, "اشتراک ماهانه", "Monthly membership"),
-            price = tr(fa, "قیمت هنگام عرضه", "Price at launch"),
-            badge = tr(fa, "به‌زودی", "COMING"),
-            highlighted = false,
-            features = listOf(
-                tr(fa, "به‌روزرسانی بانک تهدید پس از انتشار", "Threat-feed updates after launch"),
-                tr(fa, "اعتبارسنجی اختیاری هش فایل", "Optional hash reputation"),
-                tr(fa, "گزارش‌های امنیتی تکمیلی", "Expanded security reports")
-            ),
-            onSelect = { onSelectPlan("PLUS MONTHLY") }
-        )
-        PlanCard(
-            fa = fa,
-            name = "PLUS ANNUAL",
-            subtitle = tr(fa, "اشتراک سالانه", "Annual membership"),
-            price = tr(fa, "قیمت هنگام عرضه", "Price at launch"),
-            badge = tr(fa, "به‌زودی", "COMING"),
-            highlighted = false,
-            features = listOf(
-                tr(fa, "تمام قابلیت‌های طرح PLUS", "All PLUS features"),
-                tr(fa, "مدیریت و بازیابی اشتراک", "Subscription management and restoration"),
-                tr(fa, "قیمت‌گذاری منطقه‌ای شفاف", "Transparent regional pricing")
-            ),
-            onSelect = { onSelectPlan("PLUS ANNUAL") }
-        )
-        PlanCard(
-            fa = fa,
-            name = "PRO FAMILY",
-            subtitle = tr(fa, "برای چند دستگاه", "For multiple devices"),
-            price = tr(fa, "قیمت هنگام عرضه", "Price at launch"),
-            badge = tr(fa, "به‌زودی", "COMING"),
-            highlighted = false,
-            features = listOf(
-                tr(fa, "مدیریت چند دستگاه با رضایت کاربران", "Multi-device management with user consent"),
-                tr(fa, "نمای کلی امنیت خانواده", "Family security overview"),
-                tr(fa, "مدیریت اعضا و اشتراک", "Member and plan management")
-            ),
-            onSelect = { onSelectPlan("PRO FAMILY") }
-        )
-        PlanCard(
-            fa = fa,
-            name = "LIFETIME OFFLINE",
-            subtitle = tr(fa, "مجوز یک‌باره برای ابزارهای محلی", "One-time licence for local tools"),
-            price = tr(fa, "قیمت هنگام عرضه", "Price at launch"),
-            badge = tr(fa, "به‌زودی", "COMING"),
-            highlighted = false,
-            features = listOf(
-                tr(fa, "قابلیت‌های محلی بدون سرویس ابری", "Local features without cloud dependency"),
-                tr(fa, "بدون تمدید اشتراک", "No subscription renewal"),
-                tr(fa, "به‌روزرسانی امنیتی طبق شرایط عرضه", "Security updates under release terms")
-            ),
-            onSelect = { onSelectPlan("LIFETIME OFFLINE") }
-        )
+@Composable
+private fun BazaarPlanCard(fa: Boolean, name: String, offer: BazaarPlanOffer?, planReady: Boolean,
+    entitled: Boolean, loading: Boolean, trialEligible: Boolean, onClick: () -> Unit) {
+    val available = offer != null && planReady
+    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = SurfaceBase), shape = RoundedCornerShape(21.dp)) {
+        Column(Modifier.padding(17.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(name, color = TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold)
+                    Text(offer?.title?.take(90) ?: tr(fa, "محصول در پنل بازار تعریف نشده", "Product not configured in Bazaar"),
+                        color = TextSecondary, fontSize = 11.sp)
+                }
+                StatusBadge(if (trialEligible) tr(fa, "آزمایشی", "TRIAL") else "CAFE BAZAAR", if (trialEligible) ColorSuccess else BrandBlue)
+            }
+            Text(offer?.formattedPrice ?: tr(fa, "قیمت از بازار دریافت نشد", "Price unavailable from Bazaar"),
+                color = TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            if (!offer?.description.isNullOrBlank()) Text(offer!!.description.take(180), color = TextSecondary, fontSize = 10.sp, lineHeight = 15.sp)
+            Text(tr(fa, "خرید تنها پس از تأیید بازار و اعتبارسنجی سرور، دسترسی PLUS را فعال می‌کند.",
+                "PLUS access is enabled only after Bazaar purchase and server verification."),
+                color = TextSecondary, fontSize = 10.sp, lineHeight = 15.sp)
+            Button(onClick = onClick, enabled = available && !entitled && !loading, modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = BrandBlue), shape = RoundedCornerShape(13.dp)) {
+                Text(when {
+                    entitled -> tr(fa, "عضویت فعال است", "Membership active")
+                    loading -> tr(fa, "در حال بررسی…", "Verifying…")
+                    trialEligible -> tr(fa, "ادامه و بررسی دوره آزمایشی", "Continue to check trial")
+                    available -> tr(fa, "ادامه با کافه‌بازار", "Continue with Cafe Bazaar")
+                    else -> tr(fa, "فعلاً در دسترس نیست", "Not available")
+                })
+            }
+        }
     }
 }
 
@@ -3317,6 +3307,7 @@ private fun PlanCard(
     badge: String,
     highlighted: Boolean,
     features: List<String>,
+    enabled: Boolean = true,
     onSelect: () -> Unit
 ) {
     Card(
@@ -3354,6 +3345,7 @@ private fun PlanCard(
                 onClick = onSelect,
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(13.dp),
+                enabled = enabled,
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = if (highlighted) BrandTeal else TextSecondary)
             ) {
                 Text(
@@ -4028,7 +4020,7 @@ private fun featureDescription(fa: Boolean, feature: String): String = when (fea
     "quarantine" -> tr(fa, "با تأیید کاربر، نسخه AES-GCM در فضای خصوصی ذخیره و هش آن بررسی می‌شود؛ سپس حذف فایل مبدأ فقط در صورت اجازه Android یا ارائه‌دهنده فایل درخواست می‌شود. موتور ذخیره‌سازی فهرست، بازیابی و حذف را پشتیبانی می‌کند، اما صفحه مدیریتی کامل قرنطینه هنوز در رابط کاربری تکمیل نشده است.", "After user confirmation, an AES-GCM encrypted copy is stored in private app storage and its hash is verified. Source deletion is requested only if Android or the document provider allows it. The storage engine supports listing, restore and deletion, but a complete quarantine-management screen is not yet available in the UI.")
     "vulnerability" -> tr(fa, "این ماژول هنوز نتیجه آسیب‌پذیری واقعی تولید نمی‌کند. مرحله بعدی شامل شناسایی SDKها و کتابخانه‌ها و تطبیق آن‌ها با منابع CVE معتبر است.", "This module does not yet produce vulnerability findings. Next steps include SDK and library inventory mapped to trusted CVE sources.")
     "phishing" -> tr(fa, "بررسی ساختاری لینک به‌صورت آفلاین و روی دستگاه انجام می‌شود؛ لینک باز یا به اینترنت ارسال نمی‌شود. این بررسی اعتبار آنلاین دامنه یا محتوای صفحه را نمی‌سنجد و فیشینگ را قطعی تشخیص نمی‌دهد.", "URL structure is inspected offline on-device; the link is not opened or sent online. This does not check live domain reputation or page content and is not a definitive phishing verdict.")
-    "network" -> tr(fa, "محافظ شبکه هنوز فعال نیست. پیاده‌سازی آن به طراحی شفاف DNS/VPN محلی و بررسی سیاست‌های Android و Google Play نیاز دارد.", "Network protection is not active. Implementation requires transparent local DNS/VPN design and Android/Google Play policy review.")
+    "network" -> tr(fa, "محافظ شبکه هنوز فعال نیست. پیاده‌سازی آن به طراحی شفاف DNS/VPN محلی و بررسی سیاست‌های Android و کافه‌بازار نیاز دارد.", "Network protection is not active. Implementation requires transparent local DNS/VPN design and Android/Google Play policy review.")
     "brain" -> tr(fa, "مسیر اسکن از هش‌های امضاشده، قواعد محتوایی امضاشده، تحلیل ایستای APK/DEX/ELF و امتیازدهی چندنشانه‌ای پشتیبانی می‌کند؛ اما این منابع تا انتشار و نصب بانک تولیدی معتبر فعال نیستند. مدل یادگیری ماشین هنوز NOT_CONFIGURED است و تحلیل رفتاری در sandbox اجرا نمی‌شود.", "The scan pipeline supports signed hash reputation, signed content rules, APK/DEX/ELF static analysis and multi-signal risk scoring. These production intelligence sources remain inactive until a valid feed and rule bundle are published and installed. On-device ML is still NOT_CONFIGURED, and runtime sandbox analysis is not active.")
     "selfdefense" -> tr(fa, "برنامه از تنظیمات پایه مانند غیرفعال‌بودن cleartext و backup استفاده می‌کند. پایش یکپارچگی زمان اجرا و دفاع در برابر دست‌کاری هنوز نیازمند توسعه و آزمون است.", "The app uses baseline controls such as disabled cleartext traffic and backup. Runtime integrity and anti-tamper monitoring still require implementation and testing.")
     "permissions" -> tr(fa, "اسکن سریع مسیرهای رایج حافظه را بررسی می‌کند. اسکن عمیق با اجازه مدیریت همه فایل‌ها، حافظه اشتراکی و APK برنامه‌های نصب‌شده را بررسی می‌کند؛ داده خصوصی برنامه‌های دیگر، Android/data و Android/obb قابل‌دسترسی نیستند.", "Quick scan checks common storage locations. Deep scan uses user-approved All files access to inspect shared storage and installed-app APKs; other apps’ private data, Android/data and Android/obb remain inaccessible.")

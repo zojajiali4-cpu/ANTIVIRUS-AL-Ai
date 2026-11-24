@@ -32,7 +32,40 @@ import kotlinx.coroutines.withContext
  * content URIs or filesystem paths and never changes the local scan verdict.
  */
 @Composable
-fun CloudHashReputationCard(result: ScanResult, fa: Boolean) {
+fun CloudHashReputationCard(
+    result: ScanResult,
+    fa: Boolean,
+    premiumAccess: Boolean,
+    cloudAccessToken: String?,
+    onOpenStore: () -> Unit
+) {
+    val entitlementToken = cloudAccessToken?.let {
+        runCatching { CloudBillingApi.validatePlusAccessToken(it) }.getOrNull()
+    }
+    if (!premiumAccess || entitlementToken == null) {
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = if (fa) "اعتبارسنجی آنلاین هش — قابلیت PLUS" else "Online hash reputation — PLUS",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = if (fa) {
+                        "اسکن و گزارش محلی رایگان است. استعلام ابری اختیاری فقط پس از Trial یا اشتراک تأییدشده و با اجازه جداگانه شما انجام می‌شود."
+                    } else {
+                        "Local scanning and reports remain free. Optional cloud lookup requires a verified trial or subscription and separate consent."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Button(onClick = onOpenStore) {
+                    Text(if (fa) "مشاهده دوره آزمایشی" else "View free-trial offers")
+                }
+            }
+        }
+        return
+    }
     val digest = result.sha256
     val validDigest = digest.matches(Regex("[0-9a-fA-F]{64}"))
     val scope = rememberCoroutineScope()
@@ -54,9 +87,9 @@ fun CloudHashReputationCard(result: ScanResult, fa: Boolean) {
             )
             Text(
                 text = if (fa) {
-                    "برای بررسی تکمیلی، فقط اثر انگشت SHA-256 فایل ارسال می‌شود؛ خود فایل، نام و مسیر آن ارسال نمی‌شوند."
+                    "برای بررسی تکمیلی، اثر انگشت SHA-256 فایل همراه توکن کوتاه‌عمر تأیید اشتراک PLUS فرستاده می‌شود؛ خود فایل، نام و مسیر آن ارسال نمی‌شوند."
                 } else {
-                    "For an optional second opinion, only the file's SHA-256 digest is sent. The file, filename and path are never uploaded."
+                    "For an optional second opinion, the file's SHA-256 digest and a short-lived PLUS entitlement token are sent. The file, filename and path are never uploaded."
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -143,9 +176,9 @@ fun CloudHashReputationCard(result: ScanResult, fa: Boolean) {
             text = {
                 Text(
                     if (fa) {
-                        "فقط مقدار SHA-256 این فایل به سرویس ابری فرستاده می‌شود. محتوای فایل، نام، مسیر و URI ارسال نمی‌شوند. سرویس ممکن است فراداده معمول اتصال، مانند نشانی IP، را برای محدودسازی درخواست‌ها پردازش کند. عدم وجود نتیجه، تضمین سالم بودن فایل نیست. آیا موافقی؟"
+                        "مقدار SHA-256 این فایل و یک توکن کوتاه‌عمر برای تأیید اشتراک PLUS به سرویس ابری فرستاده می‌شود. محتوای فایل، نام، مسیر و URI ارسال نمی‌شوند. سرویس ممکن است فراداده معمول اتصال، مانند نشانی IP، را برای محدودسازی درخواست‌ها پردازش کند. عدم وجود نتیجه، تضمین سالم بودن فایل نیست. آیا موافقی؟"
                     } else {
-                        "Only this file's SHA-256 digest will be sent to the cloud service. File contents, filename, path and URI are not sent. The service may process normal connection metadata, such as IP address, for rate limiting. No match is not proof of safety. Do you consent?"
+                        "This file's SHA-256 digest and a short-lived PLUS entitlement token will be sent to the cloud service. File contents, filename, path and URI are not sent. The service may process normal connection metadata, such as IP address, for rate limiting. No match is not proof of safety. Do you consent?"
                     }
                 )
             },
@@ -159,15 +192,19 @@ fun CloudHashReputationCard(result: ScanResult, fa: Boolean) {
                         scope.launch {
                             try {
                                 assessment = withContext(Dispatchers.IO) {
-                                    CloudThreatApi.checkSha256(digest)
+                                    CloudThreatApi.checkSha256(digest, entitlementToken)
                                 }
                             } catch (cancelled: CancellationException) {
                                 throw cancelled
-                            } catch (_: Exception) {
-                                error = if (fa) {
-                                    "استعلام آنلاین در دسترس نیست؛ نتیجه اسکن محلی تغییری نکرد."
-                                } else {
-                                    "Online lookup is unavailable. Your local scan verdict has not changed."
+                            } catch (failure: Exception) {
+                                val accessExpired = failure.message?.contains(
+                                    "PLUS cloud access expired", ignoreCase = true
+                                ) == true
+                                error = when {
+                                    accessExpired && fa -> "دسترسی ابری PLUS منقضی شده است؛ از فروشگاه، خریدها را بازیابی کن. نتیجه اسکن محلی تغییر نکرد."
+                                    accessExpired -> "PLUS cloud access expired. Restore purchases in Store to refresh it. Your local scan result is unchanged."
+                                    fa -> "استعلام آنلاین در دسترس نیست؛ نتیجه اسکن محلی تغییری نکرد."
+                                    else -> "Online lookup is unavailable. Your local scan verdict has not changed."
                                 }
                             } finally {
                                 loading = false

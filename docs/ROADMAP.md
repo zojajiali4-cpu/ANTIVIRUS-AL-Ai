@@ -33,11 +33,30 @@
 - [x] Expose vault list/restore/delete APIs and accurate source-removal result.
 - [ ] Build quarantine-management UI, restore destination flow, and recovery tests on multiple document providers.
 - [ ] Add Android uninstall handoff with explicit user confirmation; no silent uninstall.
-- [ ] Design any continuous monitoring only through supported Android APIs, with battery, privacy, and Play policy review.
+- [ ] Design any continuous monitoring only through supported Android APIs, with battery, privacy, Android platform and Cafe Bazaar review.
 
 ## Phase 4 — Independent validation and release readiness
 - [ ] Measure precision, recall, false-positive rate, false-negative rate, unknown coverage, scan latency, and battery cost on a lawful benchmark.
 - [ ] Complete an external security review and independent AV detection evaluation (AV-TEST or equivalent).
 - [ ] Resolve all critical/high findings and publish a reproducible report.
-- [ ] Complete Play Console permission declarations for MANAGE_EXTERNAL_STORAGE and QUERY_ALL_PACKAGES.
+- [ ] Complete Cafe Bazaar permission disclosures/review and Android special-access rationale for MANAGE_EXTERNAL_STORAGE and QUERY_ALL_PACKAGES.
 - [ ] Complete privacy, retention, accessibility, localization, billing, release-signing, and supply-chain reviews.
+
+
+## Commercial MVP — Cafe Bazaar regional trial-first billing (draft PR)
+
+- [x] Replace the Android Google Play Billing client with official Cafe Bazaar Poolakey 2.3.0.
+- [x] Query actual Bazaar subscription SKU details, localized prices and account trial eligibility; do not hardcode price, currency or trial duration.
+- [x] Implement first-party Worker OAuth and Cafe Bazaar Developer API v2 purchase-token verification.
+- [x] Keep checkout closed until the Worker can authenticate to Bazaar and the app retrieves the real SKUs from Bazaar.
+- [x] Verify package, exact SKU, purchase token and expiry server-side; store only the SHA-256 purchase-token digest.
+- [x] Add restore by querying current Bazaar-account subscriptions and re-verifying them server-side.
+- [x] Keep basic offline scanning and reports free; gate optional cloud-hash reputation behind a short-lived signed entitlement and separate consent.
+- [ ] Create monthly and annual SKUs in Pishkhan: alai_plus_monthly and alai_plus_annual; configure trial and renewal terms there.
+- [ ] Configure Cafe Bazaar Developer API OAuth client ID, client secret and refresh token as Worker secrets.
+- [ ] Configure independent RATE_SALT and PLUS_ENTITLEMENT_HMAC_SECRET Worker secrets.
+- [ ] Apply D1 migration 0003_bazaar_billing.sql and deploy the Worker.
+- [ ] Run real-device tests for eligible/ineligible trial accounts, monthly/annual purchase, cancellation, expiry, restore, invalid tokens and service outage.
+- [ ] Complete regional business, tax, payout, consumer-protection, privacy and support readiness before opening each market.
+
+Google Play Billing is not used by the current Cafe Bazaar release candidate.

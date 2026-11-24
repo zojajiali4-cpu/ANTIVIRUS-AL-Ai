@@ -4,7 +4,6 @@ import android.graphics.BitmapFactory
 import android.view.ViewGroup
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import androidx.work.WorkManager
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -16,7 +15,6 @@ class MainActivityLaunchTest {
     @Test
     fun workManagerIsInitializedBeforeComposeRequestsIt() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
             scenario.onActivity { activity ->
                 assertNotNull(WorkManager.getInstance(activity.applicationContext))
             }
@@ -26,7 +24,6 @@ class MainActivityLaunchTest {
     @Test
     fun guardianArtworkResourceDecodesToBitmap() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
             scenario.onActivity { activity ->
                 val bitmap = requireNotNull(
                     BitmapFactory.decodeResource(
@@ -43,7 +40,6 @@ class MainActivityLaunchTest {
     @Test
     fun launcherActivityAttachesItsComposeContentAfterStartup() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
             scenario.onActivity { activity ->
                 assertNotNull("The launcher Activity must create a window.", activity.window)
                 val content = activity.findViewById<ViewGroup>(android.R.id.content)
