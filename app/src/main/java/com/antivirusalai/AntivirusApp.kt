@@ -3,6 +3,7 @@ package com.antivirusalai
 import android.Manifest
 import androidx.activity.ComponentActivity
 import android.content.Intent
+import android.content.ContextWrapper
 import android.net.Uri
 import android.widget.Toast
 import android.os.Build
@@ -144,7 +145,15 @@ private enum class AppInventoryConsentAction {
 @Composable
 fun AntivirusApp(inPictureInPicture: Boolean = false) {
     val context = LocalContext.current
-    val activity = context as? ComponentActivity
+    val activity = remember(context) {
+        var current: android.content.Context? = context
+        var host: ComponentActivity? = null
+        while (current != null && host == null) {
+            host = current as? ComponentActivity
+            current = if (host == null) (current as? ContextWrapper)?.baseContext else null
+        }
+        host
+    }
     val scope = rememberCoroutineScope()
     var bazaarBillingState by remember { mutableStateOf(BazaarBillingState()) }
     val bazaarBillingManager = remember(activity) {

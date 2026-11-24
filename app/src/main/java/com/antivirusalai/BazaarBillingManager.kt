@@ -88,7 +88,8 @@ class BazaarBillingManager(
                     refresh()
                 }
             }
-            connectionFailed { throwable ->
+            connectionFailed { _ ->
+                connection = null
                 if (!closed) {
                     connected = false
                     clearEntitlement(
@@ -97,6 +98,7 @@ class BazaarBillingManager(
                 }
             }
             disconnected {
+                connection = null
                 if (!closed) {
                     connected = false
                     clearEntitlement("اتصال پرداخت بازار قطع شد؛ برای ادامه دوباره تلاش کن.")
