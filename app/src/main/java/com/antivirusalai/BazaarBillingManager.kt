@@ -6,7 +6,7 @@ import androidx.activity.result.ActivityResultRegistry
 import com.antivirusalai.BuildConfig
 import ir.cafebazaar.poolakey.Connection
 import ir.cafebazaar.poolakey.Payment
-import ir.cafebazaar.poolakey.PurchaseState
+import ir.cafebazaar.poolakey.entity.PurchaseState
 import ir.cafebazaar.poolakey.config.PaymentConfiguration
 import ir.cafebazaar.poolakey.config.SecurityCheck
 import ir.cafebazaar.poolakey.entity.PurchaseInfo
