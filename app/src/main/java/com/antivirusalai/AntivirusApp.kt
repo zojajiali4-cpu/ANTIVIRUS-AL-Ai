@@ -167,13 +167,13 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
         bazaarBillingManager?.connect()
         onDispose { bazaarBillingManager?.close() }
     }
-    LaunchedEffect(activeTab, bazaarBillingManager) {
-        if (activeTab == MainTab.STORE.key) bazaarBillingManager?.refresh()
-    }
     val workManager = remember(context) { WorkManager.getInstance(context.applicationContext) }
     val restoredScan = remember(context) { ScanReportStore.load(context.applicationContext) }
     var language by rememberSaveable { mutableStateOf("fa") }
     var activeTab by rememberSaveable { mutableStateOf(MainTab.HOME.key) }
+    LaunchedEffect(activeTab, bazaarBillingManager) {
+        if (activeTab == MainTab.STORE.key) bazaarBillingManager?.refresh()
+    }
     var scanning by remember { mutableStateOf(false) }
     var quarantining by remember { mutableStateOf(false) }
     var showQuarantineConfirmation by remember { mutableStateOf(false) }
