@@ -7,12 +7,64 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import java.util.Locale
 
 enum class FolderScanMode { ALL_FILES, APK_ONLY }
 
 data class FolderScanItem(val uri: Uri, val result: ScanResult)
 
 data class FolderScanFailure(val name: String, val reason: String)
+
+data class ScanCoverageCell(
+    val format: String,
+    val verdict: ScanVerdict,
+    val count: Int
+)
+
+/**
+ * Aggregates only normalized format/verdict counts. It never retains file names,
+ * paths, hashes, or file bytes, and bounds attacker-controlled format cardinality.
+ */
+internal class ScanCoverageAccumulator {
+    private val formats = mutableSetOf<String>()
+    private val counts = mutableMapOf<Pair<String, ScanVerdict>, Int>()
+
+    fun record(result: ScanResult) {
+        val structuralFormat = result.staticAnalysis?.format
+            ?.trim()
+            ?.uppercase(Locale.ROOT)
+            ?.takeIf { format ->
+                format.isNotEmpty() && format.length <= 32 &&
+                    format.all { character -> character.isLetterOrDigit() || character in "_+.-" }
+            }
+        val mimeType = result.mimeType
+            ?.substringBefore(';')
+            ?.trim()
+            ?.lowercase(Locale.ROOT)
+            ?.takeIf { mime ->
+                mime.length <= 64 && '/' in mime &&
+                    mime.all { character -> character.isLetterOrDigit() || character in "!#data class FolderScanFailure(val name: String, val reason: String)
+^_.+-/" }
+            }
+        val candidate = structuralFormat ?: mimeType ?: "UNKNOWN"
+        val format = when {
+            candidate in formats -> candidate
+            formats.size < MAX_FORMATS - 1 -> candidate.also { formats += it }
+            else -> "OTHER".also { formats += it }
+        }
+        val key = format to result.verdict
+        counts[key] = (counts[key] ?: 0) + 1
+    }
+
+    fun snapshot(): List<ScanCoverageCell> = counts.map { (key, count) ->
+        ScanCoverageCell(format = key.first, verdict = key.second, count = count)
+    }.sortedWith(compareBy<ScanCoverageCell> { it.format }.thenBy { it.verdict.name })
+
+    companion object {
+        const val MAX_FORMATS = 32
+        const val MAX_CELLS = 256
+    }
+}
 
 data class FolderScanReport(
     val items: List<FolderScanItem>,
@@ -23,7 +75,8 @@ data class FolderScanReport(
     val scannedCountOverride: Int? = null,
     val suspiciousCountOverride: Int? = null,
     val unknownCountOverride: Int? = null,
-    val matchedCountOverride: Int? = null
+    val matchedCountOverride: Int? = null,
+    val coverageMatrix: List<ScanCoverageCell> = emptyList()
 ) {
     val scannedCount: Int get() = scannedCountOverride ?: items.size
     val suspiciousCount: Int get() = suspiciousCountOverride ?: items.count { it.result.verdict in setOf(ScanVerdict.KNOWN_MALWARE, ScanVerdict.POTENTIALLY_UNWANTED, ScanVerdict.SUSPICIOUS) }
@@ -202,6 +255,7 @@ object FolderScanEngine {
         var suspiciousCount = 0
         var unknownCount = 0
         var matchedCount = 0
+        val coverage = ScanCoverageAccumulator()
         for ((index, candidate) in candidates.withIndex()) {
             currentCoroutineContext().ensureActive()
             if (candidate.declaredSize > ScanEngine.MAX_FILE_SIZE_BYTES) {
@@ -225,6 +279,7 @@ object FolderScanEngine {
                 val result = ScanEngine.scan(context.applicationContext, candidate.uri)
                 totalBytes += result.sizeBytes
                 scannedCount++
+                coverage.record(result)
                 when (result.verdict) {
                     ScanVerdict.KNOWN_MALWARE,
                     ScanVerdict.POTENTIALLY_UNWANTED,
@@ -274,7 +329,8 @@ object FolderScanEngine {
             scannedCountOverride = scannedCount,
             suspiciousCountOverride = suspiciousCount,
             unknownCountOverride = unknownCount,
-            matchedCountOverride = matchedCount
+            matchedCountOverride = matchedCount,
+            coverageMatrix = coverage.snapshot()
         )
     }
 }
