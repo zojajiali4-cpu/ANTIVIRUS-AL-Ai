@@ -102,7 +102,10 @@ class AndroidReleaseInvariantTests(unittest.TestCase):
         self.assertIn("showConsent = true", card_source)
         self.assertIn("CloudThreatApi.checkSha256(digest, entitlementToken)", card_source)
         cloud_api = (ROOT / "app/src/main/java/com/antivirusalai/CloudThreatApi.kt").read_text(encoding="utf-8")
-        self.assertIn('setRequestProperty("Authorization", "Bearer " + accessToken)', cloud_api)
+        cloud_hash_client = cloud_api.split("fun checkSha256(", 1)[1]
+        self.assertIn('setRequestProperty("Authorization", "Bearer " + accessToken)', cloud_hash_client)
+        url_check_client = cloud_api.split("fun checkUrl(", 1)[1].split("fun checkSha256(", 1)[0]
+        self.assertNotIn('setRequestProperty("Authorization", "Bearer " + accessToken)', url_check_client)
 
         self.assertTrue((ROOT / "app/src/main/java/com/antivirusalai/CloudThreatApi.kt").is_file())
         self.assertTrue((ROOT / "app/src/main/java/com/antivirusalai/CloudHashReputationCard.kt").is_file())

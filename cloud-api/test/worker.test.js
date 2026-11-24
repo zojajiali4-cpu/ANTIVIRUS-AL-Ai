@@ -392,8 +392,17 @@ test("hash reputation rejects missing, forged and expired PLUS access tokens bef
   const cases = [
     {},
     plusAuthorization("not-a-valid-token.signature"),
+    plusAuthorization(signedPlusAccessToken({ aud: "another-api" })),
+    plusAuthorization(signedPlusAccessToken({ productId: "another-product" })),
+    plusAuthorization(signedPlusAccessToken({ basePlanId: "lifetime" })),
+    plusAuthorization(signedPlusAccessToken({ subscriptionState: "SUBSCRIPTION_STATE_ON_HOLD" })),
     plusAuthorization(signedPlusAccessToken({ exp: Math.floor(Date.now() / 1000) - 1 })),
-    plusAuthorization(signedPlusAccessToken({ subscriptionExpiresAt: Math.floor(Date.now() / 1000) - 1 }))
+    plusAuthorization(signedPlusAccessToken({ subscriptionExpiresAt: Math.floor(Date.now() / 1000) - 1 })),
+    plusAuthorization((() => {
+      const parts = signedPlusAccessToken().split(".");
+      parts[1] = (parts[1][0] === "A" ? "B" : "A") + parts[1].slice(1);
+      return parts.join(".");
+    })())
   ];
   for (const headers of cases) {
     const response = await worker.fetch(request("/v1/hash/reputation", { sha256: "f".repeat(64) }, headers), env);
