@@ -25,11 +25,12 @@ android {
         applicationId = "com.antivirusalai"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.4.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "ALAI_API_BASE_URL", "\"https://antivirus-al-ai-api.zojajiali4.workers.dev\"")
-        buildConfigField("String", "ALAI_SUBSCRIPTION_PRODUCT_ID", "\"alai_plus\"")
+        buildConfigField("String", "ALAI_MONTHLY_PRODUCT_ID", "\"alai_plus_monthly\"")
+        buildConfigField("String", "ALAI_ANNUAL_PRODUCT_ID", "\"alai_plus_annual\"")
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
         }
@@ -85,7 +86,7 @@ kotlin {
 
 dependencies {
     implementation(libs.androidx.activity.compose)
-    implementation(libs.play.billing)
+    implementation(libs.poolakey)
     implementation("androidx.work:work-runtime-ktx:2.12.0")
     implementation(libs.androidx.compose.animation.core)
     implementation("androidx.lifecycle:lifecycle-livedata-ktx:2.9.4")
@@ -94,6 +95,7 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)
+    testImplementation("org.json:json:20240303")
     androidTestImplementation("androidx.test:core:1.6.1")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
