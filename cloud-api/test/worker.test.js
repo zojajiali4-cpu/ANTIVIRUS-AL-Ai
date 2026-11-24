@@ -139,7 +139,10 @@ test("protected API fails closed when RATE_SALT is missing or too short", async 
 
 test("rate-limit identifier is HMAC-SHA256, not an unkeyed IP digest", async () => {
   const db = makeD1();
-  const response = await worker.fetch(request("/v1/hash/reputation", { sha256: "b".repeat(64) }), { DB: db, RATE_SALT });
+  const response = await worker.fetch(
+    request("/v1/hash/reputation", { sha256: "b".repeat(64) }, plusAuthorization()),
+    playBillingEnvironment(db)
+  );
   assert.equal(response.status, 200);
   const insert = db.statements.find(item => item.sql.startsWith("INSERT INTO api_rate_limits"));
   assert.ok(insert);
