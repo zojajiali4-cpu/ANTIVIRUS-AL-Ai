@@ -137,6 +137,9 @@ jobs:
     timeout-minutes: 45
     strategy:
       fail-fast: false
+      # Run one emulator at a time. Three concurrent Android VMs exhausted
+      # runner ADB/package services and caused false-negative smoke failures.
+      max-parallel: 1
       matrix:
         api-level: [33, 35, 36]
     steps:
@@ -193,16 +196,154 @@ jobs:
           ls -l /dev/kvm
 
       - name: Launch app and run instrumentation tests
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: ${{ matrix.api-level }}
-          target: google_apis
-          arch: x86_64
-          profile: pixel_2
-          disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -wipe-data
-          emulator-boot-timeout: 1200
-          script: gradle --no-daemon connectedDebugAndroidTest --stacktrace
+        shell: bash
+        # Start the emulator directly so the workflow can wait for Android framework
+        # services, not only sys.boot_completed, before issuing input/PackageManager calls.
+        env:
+          ANDROID_I_WANT_MY_TCG: "yes"
+          API_LEVEL: ${{ matrix.api-level }}
+        run: |
+          set -Eeuo pipefail
+          SDKMANAGER_DIR="$(dirname "$(command -v sdkmanager)")"
+          AVDMANAGER="$SDKMANAGER_DIR/avdmanager"
+          ADB="$ANDROID_HOME/platform-tools/adb"
+          EMULATOR="$ANDROID_HOME/emulator/emulator"
+          AVD_NAME="antivirus-api-$API_LEVEL"
+          EMULATOR_LOG="$RUNNER_TEMP/emulator-$API_LEVEL.log"
+
+          # Pin the AVD manager and emulator to the same per-runner directory.
+          # This avoids relying on differing Android user-home defaults.
+          export ANDROID_USER_HOME="${ANDROID_USER_HOME:-$HOME/.android}"
+          export ANDROID_AVD_HOME="${ANDROID_AVD_HOME:-$ANDROID_USER_HOME/avd}"
+          mkdir -p "$ANDROID_AVD_HOME"
+          AVD_INI="$ANDROID_AVD_HOME/$AVD_NAME.ini"
+          AVD_DIR="$ANDROID_AVD_HOME/$AVD_NAME.avd"
+
+          "$SDKMANAGER_DIR/sdkmanager" "emulator" "system-images;android-$API_LEVEL;google_apis;x86_64"
+          echo "no" | "$AVDMANAGER" create avd --force --name "$AVD_NAME" \
+            --package "system-images;android-$API_LEVEL;google_apis;x86_64" --device pixel_2
+
+          # Fail at creation with actionable diagnostics rather than launching
+          # an emulator that cannot resolve the AVD name.
+          if [[ ! -s "$AVD_INI" || ! -d "$AVD_DIR" ]]; then
+            echo "::error::AVDManager did not create the expected AVD at $ANDROID_AVD_HOME."
+            "$AVDMANAGER" list avd || true
+            find "$ANDROID_USER_HOME" -maxdepth 3 -type f -name "$AVD_NAME.ini" -print 2>/dev/null || true
+            exit 1
+          fi
+          if ! "$EMULATOR" -list-avds | grep -Fxq "$AVD_NAME"; then
+            echo "::error::The emulator cannot enumerate the newly created AVD '$AVD_NAME'."
+            "$EMULATOR" -list-avds || true
+            exit 1
+          fi
+
+          "$ADB" start-server
+          "$EMULATOR" -avd "$AVD_NAME" -port 5554 -no-window -gpu swiftshader_indirect \
+            -noaudio -no-boot-anim -no-snapshot -wipe-data -accel auto >"$EMULATOR_LOG" 2>&1 &
+          EMULATOR_PID=$!
+
+          cleanup() {
+            local status=$?
+            trap - EXIT
+            if (( status != 0 )); then
+              echo "::group::Emulator diagnostics (API $API_LEVEL)"
+              echo "Emulator process status:"
+              if kill -0 "$EMULATOR_PID" 2>/dev/null; then
+                echo "emulator process is still running"
+              else
+                echo "emulator process has exited"
+              fi
+              echo "Recent emulator console/kernel output:"
+              tail -n 200 "$EMULATOR_LOG" 2>&1 || true
+              echo "ADB device list (bounded):"
+              timeout 8s "$ADB" devices -l 2>&1 || true
+              echo "Recent Android logcat (bounded; may be unavailable before ADB connects):"
+              timeout 10s "$ADB" -s emulator-5554 logcat -d -b all -t 2000 2>&1 \
+                | grep -Ei "system_server|PackageManager|InputManager|FATAL EXCEPTION|lowmemory|lmkd|OutOfMemory|Watchdog|ANR" \
+                | tail -n 120 || true
+              echo "::endgroup::"
+            fi
+            timeout 8s "$ADB" -s emulator-5554 emu kill >/dev/null 2>&1 || true
+            kill "$EMULATOR_PID" 2>/dev/null || true
+            for attempt in $(seq 1 10); do
+              kill -0 "$EMULATOR_PID" 2>/dev/null || break
+              sleep 1
+            done
+            kill -9 "$EMULATOR_PID" 2>/dev/null || true
+            wait "$EMULATOR_PID" 2>/dev/null || true
+            exit "$status"
+          }
+          trap cleanup EXIT
+
+          device_ready=false
+          for attempt in $(seq 1 120); do
+            if ! kill -0 "$EMULATOR_PID" 2>/dev/null; then
+              echo "::error::Emulator process exited before ADB detected API $API_LEVEL."
+              tail -n 200 "$EMULATOR_LOG" 2>&1 || true
+              exit 1
+            fi
+            if timeout 8s "$ADB" devices 2>/dev/null | grep -Eq "^emulator-5554[[:space:]]+device$"; then
+              device_ready=true
+              echo "ADB detected emulator API $API_LEVEL (attempt $attempt/120)."
+              break
+            fi
+            sleep 5
+          done
+          if [[ "$device_ready" != true ]]; then
+            echo "::error::ADB did not detect emulator API $API_LEVEL within 10 minutes."
+            exit 1
+          fi
+
+          booted=false
+          for attempt in $(seq 1 240); do
+            if [[ "$("$ADB" -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)" == "1" ]]; then
+              booted=true
+              break
+            fi
+            sleep 5
+          done
+          if [[ "$booted" != true ]]; then
+            echo "::error::Emulator API $API_LEVEL did not complete boot within 20 minutes."
+            exit 1
+          fi
+
+          wait_for_service() {
+            local service="$1"
+            for attempt in $(seq 1 90); do
+              if "$ADB" -s emulator-5554 shell service check "$service" 2>&1 | grep -Eq ':[[:space:]]*found[[:space:]]*$'; then
+                echo "Android service '$service' is ready (attempt $attempt/90)."
+                return 0
+              fi
+              sleep 2
+            done
+            echo "::error::Android service '$service' did not become ready on API $API_LEVEL."
+            return 1
+          }
+
+          # sys.boot_completed can precede registration of framework services.
+          # Wait for both services before the unlock keyevent and APK installation.
+          wait_for_service input
+          wait_for_service package
+
+          package_ready=false
+          for attempt in $(seq 1 60); do
+            if timeout 10s "$ADB" -s emulator-5554 shell cmd package list packages >/dev/null 2>&1; then
+              package_ready=true
+              echo "Package Manager responds to package queries (attempt $attempt/60)."
+              break
+            fi
+            sleep 2
+          done
+          if [[ "$package_ready" != true ]]; then
+            echo "::error::Package Manager stayed unavailable on API $API_LEVEL."
+            exit 1
+          fi
+
+          "$ADB" -s emulator-5554 shell input keyevent 82
+          "$ADB" -s emulator-5554 shell settings put global window_animation_scale 0
+          "$ADB" -s emulator-5554 shell settings put global transition_animation_scale 0
+          "$ADB" -s emulator-5554 shell settings put global animator_duration_scale 0
+          gradle --no-daemon connectedDebugAndroidTest --stacktrace
 
   release-bundle-preflight:
     name: Build and inspect unsigned release AAB
