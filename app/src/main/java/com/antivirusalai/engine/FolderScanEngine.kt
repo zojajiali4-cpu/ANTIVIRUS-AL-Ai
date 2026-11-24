@@ -43,8 +43,7 @@ internal class ScanCoverageAccumulator {
             ?.lowercase(Locale.ROOT)
             ?.takeIf { mime ->
                 mime.length <= 64 && '/' in mime &&
-                    mime.all { character -> character.isLetterOrDigit() || character in "!#data class FolderScanFailure(val name: String, val reason: String)
-^_.+-/" }
+                    mime.all { character -> character.isLetterOrDigit() || character in "/-+._!#$&^" }
             }
         val candidate = structuralFormat ?: mimeType ?: "UNKNOWN"
         val format = when {
