@@ -143,10 +143,11 @@ private enum class AppInventoryConsentAction {
 @Composable
 fun AntivirusApp(inPictureInPicture: Boolean = false) {
     val context = LocalContext.current
-    var billingUiState by remember { mutableStateOf(PlayBillingUiState()) }
-    val billingManager = remember(context) {
-        (context as? android.app.Activity)?.let { activity ->
-            PlayBillingManager(context, activity) { state -> billingUiState = state }
+    var billingUiState by remember { mutableStateOf(BazaarBillingUiState()) }
+    val billingActivity = context as? androidx.activity.ComponentActivity
+    val billingManager = remember(billingActivity) {
+        billingActivity?.let { activity ->
+            BazaarBillingManager(context, activity.activityResultRegistry) { state -> billingUiState = state }
         }
     }
     DisposableEffect(billingManager) {
@@ -646,17 +647,7 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
                                 fa = fa,
                                 billingState = billingUiState,
                                 onPurchase = { basePlan -> billingManager?.launchPlan(basePlan) },
-                                onRestore = { billingManager?.restorePurchases() },
-                                onManageSubscription = {
-                                    runCatching {
-                                        context.startActivity(Intent(
-                                            Intent.ACTION_VIEW,
-                                            Uri.parse("https://play.google.com/store/account/subscriptions?package=com.antivirusalai")
-                                        ))
-                                    }.onFailure {
-                                        errorMessage = tr(fa, "صفحه مدیریت اشتراک باز نشد.", "Subscription management could not be opened.")
-                                    }
-                                }
+                                onRestore = { billingManager?.restorePurchases() }
                             )
 
                             else -> SettingsScreen(
@@ -3210,181 +3201,89 @@ private fun QuarantineVaultScreen(
 }
 
 @Composable
-private fun StoreScreen(
-    fa: Boolean,
-    billingState: PlayBillingUiState,
-    onPurchase: (String) -> Unit,
-    onRestore: () -> Unit,
-    onManageSubscription: () -> Unit
-) {
-    val monthly = billingState.offers.firstOrNull { it.basePlanId == "monthly" }
-    val annual = billingState.offers.firstOrNull { it.basePlanId == "annual" }
-    val expiryText = billingState.expiresAtEpochMillis?.let {
-        java.text.DateFormat.getDateInstance().format(java.util.Date(it))
-    }
+private fun StoreScreen(fa: Boolean, billingState: BazaarBillingUiState, onPurchase: (String) -> Unit, onRestore: () -> Unit) {
+    val monthly = billingState.offers.firstOrNull { it.productId == BuildConfig.ALAI_MONTHLY_PRODUCT_ID }
+    val annual = billingState.offers.firstOrNull { it.productId == BuildConfig.ALAI_ANNUAL_PRODUCT_ID }
+    val expiryText = billingState.expiresAtEpochMillis?.let { java.text.DateFormat.getDateInstance().format(java.util.Date(it)) }
     Column(verticalArrangement = Arrangement.spacedBy(15.dp)) {
         Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
             EyebrowLabel(tr(fa, "عضویت و دوره آزمایشی", "MEMBERSHIP & FREE TRIAL"))
             Text(tr(fa, "فروشگاه", "Store"), color = TextPrimary, fontSize = 25.sp, fontWeight = FontWeight.Bold)
-            Text(tr(fa, "قیمت و پیشنهادهای قابل‌خرید مستقیماً از Google Play دریافت می‌شوند.", "Prices and eligible offers come directly from Google Play."),
+            Text(tr(fa, "پرداخت امن و قیمت‌گذاری از طریق کافه‌بازار انجام می‌شود.", "Secure checkout and localized pricing are provided by Cafe Bazaar."),
                 color = TextSecondary, fontSize = 12.sp)
         }
         InfoBanner(
             title = when {
-                billingState.entitled && billingState.isTrial -> tr(fa, "دوره آزمایشی فعال", "Free trial active")
-                billingState.entitled -> tr(fa, "اشتراک تأییدشده فعال است", "Verified membership is active")
-                billingState.checkoutReady && billingState.offers.isNotEmpty() -> tr(fa, "پیشنهادهای منطقه‌ای آماده‌اند", "Regional offers are available")
+                billingState.entitled -> tr(fa, "اشتراک تأییدشده فعال است", "Verified subscription is active")
+                billingState.trialEligible && billingState.trialPeriodDays > 0 -> tr(fa, "دوره آزمایشی در دسترس است", "Trial may be available")
+                billingState.checkoutReady -> tr(fa, "طرح‌های اشتراک آماده‌اند", "Subscription plans are available")
                 else -> tr(fa, "خرید فعلاً در دسترس نیست", "Checkout is not currently available")
             },
             body = when {
-                billingState.entitled && billingState.isTrial -> tr(
-                    fa, "دسترسی آزمایشی شما تا " + (expiryText ?: "تاریخ اعلام‌شده در Google Play") + " فعال است. وضعیت توسط سرور و Google Play تأیید شده است.",
-                    "Your verified trial access is active until " + (expiryText ?: "the expiry shown by Google Play") + "."
-                )
-                billingState.entitled -> tr(
-                    fa, "اشتراک شما تا " + (expiryText ?: "تاریخ اعلام‌شده در Google Play") + " معتبر است. برای لغو یا تغییر آن از Google Play استفاده کن.",
-                    "Your verified subscription is valid until " + (expiryText ?: "the expiry shown by Google Play") + ". Manage renewal through Google Play."
-                )
-                billingState.checkoutReady && billingState.offers.isNotEmpty() -> tr(
-                    fa, "مدت دوره آزمایشی، قیمت بعد از پایان آن، ارز و زمان تمدید پیش از تأیید نهایی در صفحه امن Google Play نمایش داده می‌شود. پیشنهاد رایگان فقط در صورت واجدشرایط بودن حساب قابل نمایش است.",
-                    "Google Play shows the trial duration, post-trial price, currency and renewal terms before confirmation. A free trial appears only when this account is eligible."
-                )
-                else -> tr(
-                    fa, "اتصال فروشگاه یا پیکربندی محصول و سرویس اعتبارسنجی کامل نیست. هیچ پرداخت یا دسترسی ویژه‌ای فعال نمی‌شود. اسکن و امکانات پایه آفلاین همچنان رایگان‌اند.",
-                    "The Play connection, product configuration or server verification is not ready. No payment or premium access is activated. Core offline scanning remains free."
-                )
+                billingState.entitled -> tr(fa, "اشتراک شما تا " + (expiryText ?: "زمان تأییدشده توسط بازار") + " معتبر است. وضعیت خرید از سرویس رسمی بازار استعلام شده است.",
+                    "Your subscription is verified until " + (expiryText ?: "the expiry confirmed by Bazaar") + ".")
+                billingState.trialEligible && billingState.trialPeriodDays > 0 -> tr(fa, "بازار برای حساب شما امکان دوره آزمایشی تا " + billingState.trialPeriodDays + " روز را گزارش کرده است. شرایط نهایی و زمان اولین پرداخت را پیش از تأیید در صفحه پرداخت بازار بررسی کن.",
+                    "Bazaar reports trial eligibility for up to " + billingState.trialPeriodDays + " days. Review final terms and the first charge date in Bazaar checkout.")
+                billingState.checkoutReady -> tr(fa, "قیمت نهایی و شرایط تمدید در صفحه امن پرداخت بازار نمایش داده می‌شود. هیچ قیمت یا مدت آزمایشی در برنامه حدس زده نمی‌شود.",
+                    "Final price and renewal terms are shown in Bazaar's secure checkout.")
+                else -> tr(fa, "محصولات بازار یا اعتبارسنجی سمت سرور هنوز پیکربندی نشده‌اند. هیچ پرداخت یا دسترسی ویژه‌ای فعال نمی‌شود؛ اسکن پایه همچنان رایگان است.",
+                    "Bazaar products or server verification are not configured yet. No payment or premium access is enabled; core scanning remains free.")
             },
-            warning = !billingState.entitled && (!billingState.checkoutReady || billingState.offers.isEmpty())
+            warning = !billingState.entitled && !billingState.checkoutReady
         )
-        PlanCard(
-            fa = fa, name = "FREE",
-            subtitle = tr(fa, "امنیت پایه، بدون هزینه", "Essential protection, no cost"),
-            price = tr(fa, "رایگان", "Free"),
-            badge = tr(fa, "همیشه رایگان", "ALWAYS FREE"),
-            highlighted = true,
-            features = listOf(
-                tr(fa, "اسکن انتخابی فایل و تحلیل پایه APK", "Selected-file scanning and basic APK analysis"),
+        PlanCard(fa = fa, name = "FREE", subtitle = tr(fa, "امنیت پایه، بدون هزینه", "Essential protection, no cost"),
+            price = tr(fa, "رایگان", "Free"), badge = tr(fa, "همیشه رایگان", "ALWAYS FREE"), highlighted = true,
+            features = listOf(tr(fa, "اسکن انتخابی فایل و تحلیل پایه APK", "Selected-file scanning and basic APK analysis"),
                 tr(fa, "گزارش شفاف با نمایش شواهد", "Transparent evidence-based reports"),
                 tr(fa, "قرنطینه رمزنگاری‌شده در فضای خصوصی", "Encrypted quarantine in private app storage"),
-                tr(fa, "پردازش محلی بدون آپلود محتوای فایل", "Local processing without file-content uploads")
-            ),
-            enabled = false,
-            onSelect = {}
-        )
-        BillingPlanCard(
-            fa = fa, name = tr(fa, "PLUS ماهانه", "PLUS MONTHLY"),
-            subtitle = tr(fa, "دوره آزمایشی در صورت واجدشرایط بودن", "Free trial when eligible"),
-            offer = monthly,
-            badge = if (monthly?.hasFreeTrial == true) tr(fa, "دوره آزمایشی", "FREE TRIAL") else tr(fa, "Google Play", "GOOGLE PLAY"),
-            entitled = billingState.entitled, loading = billingState.loading,
-            checkoutReady = billingState.checkoutReady,
-            onClick = { onPurchase("monthly") }
-        )
-        BillingPlanCard(
-            fa = fa, name = tr(fa, "PLUS سالانه", "PLUS ANNUAL"),
-            subtitle = tr(fa, "دوره آزمایشی در صورت واجدشرایط بودن", "Free trial when eligible"),
-            offer = annual,
-            badge = if (annual?.hasFreeTrial == true) tr(fa, "دوره آزمایشی", "FREE TRIAL") else tr(fa, "Google Play", "GOOGLE PLAY"),
-            entitled = billingState.entitled, loading = billingState.loading,
-            checkoutReady = billingState.checkoutReady,
-            onClick = { onPurchase("annual") }
-        )
-        InfoBanner(
-            title = tr(fa, "شفافیت تمدید و لغو", "Renewal and cancellation transparency"),
-            body = tr(
-                fa,
-                "دوره آزمایشی خودکار به اشتراک پولی همان طرح تبدیل می‌شود، مگر آن را پیش از موعد تمدید از طریق Google Play لغو کنی. قیمت دقیق، تاریخ اولین پرداخت و شرایط تمدید در صفحه تأیید Google Play نمایش داده می‌شود؛ ANTIVIRUS AL AI قیمت یا مدت Trial را حدس نمی‌زند.",
-                "A free trial converts to the selected paid plan unless it is canceled through Google Play before renewal. Google Play displays the exact price, first charge date and renewal terms; ANTIVIRUS AL AI never guesses trial length or price."
-            ), warning = true
-        )
-        billingState.message?.let {
-            InfoBanner(title = tr(fa, "وضعیت فروشگاه", "Store status"), body = it, warning = !billingState.entitled)
-        }
-        OutlinedButton(onClick = onRestore, modifier = Modifier.fillMaxWidth(),
-            enabled = billingState.connected && !billingState.loading) {
+                tr(fa, "پردازش محلی بدون آپلود محتوای فایل", "Local processing without file-content uploads")),
+            enabled = false, onSelect = {})
+        BazaarPlanCard(fa, tr(fa, "PLUS ماهانه", "PLUS MONTHLY"), monthly, "monthly" in billingState.activeBasePlans,
+            billingState.entitled, billingState.loading, billingState.trialEligible) { onPurchase(BuildConfig.ALAI_MONTHLY_PRODUCT_ID) }
+        BazaarPlanCard(fa, tr(fa, "PLUS سالانه", "PLUS ANNUAL"), annual, "annual" in billingState.activeBasePlans,
+            billingState.entitled, billingState.loading, billingState.trialEligible) { onPurchase(BuildConfig.ALAI_ANNUAL_PRODUCT_ID) }
+        InfoBanner(title = tr(fa, "شفافیت تمدید و لغو", "Renewal and cancellation transparency"),
+            body = tr(fa, "اگر دوره آزمایشی و تمدید خودکار برای محصول فعال شده باشد، شرایط، مبلغ و زمان اولین پرداخت در صفحه تأیید کافه‌بازار نمایش داده می‌شود. مدیریت و لغو اشتراک از حساب کاربری بازار انجام می‌شود.",
+                "If a trial and auto-renewal are configured, Bazaar checkout displays the terms, amount and first charge date. Manage or cancel from your Cafe Bazaar account."),
+            warning = true)
+        billingState.message?.let { InfoBanner(title = tr(fa, "وضعیت فروشگاه", "Store status"), body = it, warning = !billingState.entitled) }
+        OutlinedButton(onClick = onRestore, modifier = Modifier.fillMaxWidth(), enabled = billingState.connected && !billingState.loading) {
             Text(tr(fa, "بازیابی خریدها", "Restore purchases"))
-        }
-        if (billingState.entitled) {
-            OutlinedButton(onClick = onManageSubscription, modifier = Modifier.fillMaxWidth()) {
-                Text(tr(fa, "مدیریت یا لغو اشتراک در Google Play", "Manage or cancel in Google Play"))
-            }
         }
     }
 }
 
 @Composable
-private fun BillingPlanCard(
-    fa: Boolean,
-    name: String,
-    subtitle: String,
-    offer: PlayPlanOffer?,
-    badge: String,
-    entitled: Boolean,
-    loading: Boolean,
-    checkoutReady: Boolean,
-    onClick: () -> Unit
-) {
-    val available = offer != null
-    val priceText = when {
-        offer == null -> tr(fa, "قیمت و پیشنهاد از فروشگاه دریافت نشد", "Price and offer unavailable")
-        else -> offer.pricePhases.joinToString(" → ") { phase ->
-            val period = describeBillingPeriod(phase.billingPeriod, fa)
-            when {
-                phase.isFreeTrial -> tr(fa, period + " رایگان", period + " free")
-                phase.billingCycleCount > 0 -> tr(
-                    fa,
-                    phase.formattedPrice + " برای " + phase.billingCycleCount + " دوره " + period,
-                    phase.formattedPrice + " for " + phase.billingCycleCount + " " + period
-                )
-                else -> phase.formattedPrice + " / " + period
-            }
-        }
-    }
-    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = SurfaceBase),
-        shape = RoundedCornerShape(21.dp)) {
+private fun BazaarPlanCard(fa: Boolean, name: String, offer: BazaarPlanOffer?, planReady: Boolean,
+    entitled: Boolean, loading: Boolean, trialEligible: Boolean, onClick: () -> Unit) {
+    val available = offer != null && planReady
+    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = SurfaceBase), shape = RoundedCornerShape(21.dp)) {
         Column(Modifier.padding(17.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(name, color = TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold)
-                    Text(subtitle, color = TextSecondary, fontSize = 11.sp)
+                    Text(offer?.title?.take(90) ?: tr(fa, "محصول در پنل بازار تعریف نشده", "Product not configured in Bazaar"),
+                        color = TextSecondary, fontSize = 11.sp)
                 }
-                StatusBadge(badge, if (offer?.hasFreeTrial == true) ColorSuccess else BrandBlue)
+                StatusBadge(if (trialEligible) tr(fa, "آزمایشی", "TRIAL") else "CAFE BAZAAR", if (trialEligible) ColorSuccess else BrandBlue)
             }
-            Text(priceText, color = if (offer?.hasFreeTrial == true) ColorSuccess else TextPrimary,
-                fontSize = 15.sp, fontWeight = FontWeight.Bold)
-            Text(
-                tr(fa,
-                    "خرید فقط وقتی فعال است که پیشنهاد معتبر Google Play و اعتبارسنجی امن سرور در دسترس باشند.",
-                    "Purchase is enabled only when a valid Google Play offer and secure server verification are available."),
-                color = TextSecondary, fontSize = 10.sp, lineHeight = 15.sp
-            )
-            Button(onClick = onClick, enabled = available && checkoutReady && !entitled && !loading,
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = BrandBlue),
-                shape = RoundedCornerShape(13.dp)) {
+            Text(offer?.formattedPrice ?: tr(fa, "قیمت از بازار دریافت نشد", "Price unavailable from Bazaar"),
+                color = TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            if (!offer?.description.isNullOrBlank()) Text(offer!!.description.take(180), color = TextSecondary, fontSize = 10.sp, lineHeight = 15.sp)
+            Text(tr(fa, "خرید تنها پس از تأیید بازار و اعتبارسنجی سرور، دسترسی PLUS را فعال می‌کند.",
+                "PLUS access is enabled only after Bazaar purchase and server verification."),
+                color = TextSecondary, fontSize = 10.sp, lineHeight = 15.sp)
+            Button(onClick = onClick, enabled = available && !entitled && !loading, modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = BrandBlue), shape = RoundedCornerShape(13.dp)) {
                 Text(when {
                     entitled -> tr(fa, "عضویت فعال است", "Membership active")
                     loading -> tr(fa, "در حال بررسی…", "Verifying…")
-                    offer?.hasFreeTrial == true -> tr(fa, "شروع دوره آزمایشی", "Start free trial")
-                    available && !checkoutReady -> tr(fa, "اعتبارسنجی خرید آماده نیست", "Secure verification unavailable")
-                    available -> tr(fa, "ادامه با Google Play", "Continue with Google Play")
+                    trialEligible -> tr(fa, "ادامه و بررسی دوره آزمایشی", "Continue to check trial")
+                    available -> tr(fa, "ادامه با کافه‌بازار", "Continue with Cafe Bazaar")
                     else -> tr(fa, "فعلاً در دسترس نیست", "Not available")
                 })
             }
         }
-    }
-}
-
-private fun describeBillingPeriod(value: String, fa: Boolean): String {
-    val match = Regex("^P([0-9]+)(D|W|M|Y)$").matchEntire(value) ?: return value
-    val amount = match.groupValues[1].toIntOrNull() ?: return value
-    return when (match.groupValues[2]) {
-        "D" -> if (fa) amount.toString() + " روز" else amount.toString() + if (amount == 1) " day" else " days"
-        "W" -> if (fa) amount.toString() + " هفته" else amount.toString() + if (amount == 1) " week" else " weeks"
-        "M" -> if (fa) amount.toString() + " ماه" else amount.toString() + if (amount == 1) " month" else " months"
-        "Y" -> if (fa) amount.toString() + " سال" else amount.toString() + if (amount == 1) " year" else " years"
-        else -> value
     }
 }
 
@@ -4110,7 +4009,7 @@ private fun featureDescription(fa: Boolean, feature: String): String = when (fea
     "quarantine" -> tr(fa, "با تأیید کاربر، نسخه AES-GCM در فضای خصوصی ذخیره و هش آن بررسی می‌شود؛ سپس حذف فایل مبدأ فقط در صورت اجازه Android یا ارائه‌دهنده فایل درخواست می‌شود. موتور ذخیره‌سازی فهرست، بازیابی و حذف را پشتیبانی می‌کند، اما صفحه مدیریتی کامل قرنطینه هنوز در رابط کاربری تکمیل نشده است.", "After user confirmation, an AES-GCM encrypted copy is stored in private app storage and its hash is verified. Source deletion is requested only if Android or the document provider allows it. The storage engine supports listing, restore and deletion, but a complete quarantine-management screen is not yet available in the UI.")
     "vulnerability" -> tr(fa, "این ماژول هنوز نتیجه آسیب‌پذیری واقعی تولید نمی‌کند. مرحله بعدی شامل شناسایی SDKها و کتابخانه‌ها و تطبیق آن‌ها با منابع CVE معتبر است.", "This module does not yet produce vulnerability findings. Next steps include SDK and library inventory mapped to trusted CVE sources.")
     "phishing" -> tr(fa, "بررسی ساختاری لینک به‌صورت آفلاین و روی دستگاه انجام می‌شود؛ لینک باز یا به اینترنت ارسال نمی‌شود. این بررسی اعتبار آنلاین دامنه یا محتوای صفحه را نمی‌سنجد و فیشینگ را قطعی تشخیص نمی‌دهد.", "URL structure is inspected offline on-device; the link is not opened or sent online. This does not check live domain reputation or page content and is not a definitive phishing verdict.")
-    "network" -> tr(fa, "محافظ شبکه هنوز فعال نیست. پیاده‌سازی آن به طراحی شفاف DNS/VPN محلی و بررسی سیاست‌های Android و Google Play نیاز دارد.", "Network protection is not active. Implementation requires transparent local DNS/VPN design and Android/Google Play policy review.")
+    "network" -> tr(fa, "محافظ شبکه هنوز فعال نیست. پیاده‌سازی آن به طراحی شفاف DNS/VPN محلی و بررسی سیاست‌های Android و کافه‌بازار نیاز دارد.", "Network protection is not active. Implementation requires transparent local DNS/VPN design and Android/Google Play policy review.")
     "brain" -> tr(fa, "مسیر اسکن از هش‌های امضاشده، قواعد محتوایی امضاشده، تحلیل ایستای APK/DEX/ELF و امتیازدهی چندنشانه‌ای پشتیبانی می‌کند؛ اما این منابع تا انتشار و نصب بانک تولیدی معتبر فعال نیستند. مدل یادگیری ماشین هنوز NOT_CONFIGURED است و تحلیل رفتاری در sandbox اجرا نمی‌شود.", "The scan pipeline supports signed hash reputation, signed content rules, APK/DEX/ELF static analysis and multi-signal risk scoring. These production intelligence sources remain inactive until a valid feed and rule bundle are published and installed. On-device ML is still NOT_CONFIGURED, and runtime sandbox analysis is not active.")
     "selfdefense" -> tr(fa, "برنامه از تنظیمات پایه مانند غیرفعال‌بودن cleartext و backup استفاده می‌کند. پایش یکپارچگی زمان اجرا و دفاع در برابر دست‌کاری هنوز نیازمند توسعه و آزمون است.", "The app uses baseline controls such as disabled cleartext traffic and backup. Runtime integrity and anti-tamper monitoring still require implementation and testing.")
     "permissions" -> tr(fa, "اسکن سریع مسیرهای رایج حافظه را بررسی می‌کند. اسکن عمیق با اجازه مدیریت همه فایل‌ها، حافظه اشتراکی و APK برنامه‌های نصب‌شده را بررسی می‌کند؛ داده خصوصی برنامه‌های دیگر، Android/data و Android/obb قابل‌دسترسی نیستند.", "Quick scan checks common storage locations. Deep scan uses user-approved All files access to inspect shared storage and installed-app APKs; other apps’ private data, Android/data and Android/obb remain inaccessible.")
