@@ -4,7 +4,7 @@
 
 For support requests, bug reports, and product feedback, contact **Zojajiali4@gmail.com**. The Android Settings → Support screen opens the device's email app when available.
 
-Privacy-first Android security scanner. Current Android milestone: **0.3.0 (versionCode 3)**. The app includes a bilingual Persian/English dashboard, automatic quick/deep shared-storage scanning, a bounded local scan pipeline, an authenticated threat-feed client, and an encrypted quarantine vault.
+Privacy-first Android security scanner. Current Android milestone: **0.4.0 (versionCode 4)**. The app includes a bilingual Persian/English dashboard, automatic quick/deep shared-storage scanning, a bounded local scan pipeline, an authenticated threat-feed client, and an encrypted quarantine vault.
 
 ## Implemented security layers
 
@@ -73,7 +73,7 @@ See `docs/DETECTION_VALIDATION.md`, `docs/THREAT_INTEL_OPERATIONS.md`, and `docs
 
 ## Build
 
-The Android package version is `0.3.0` (`versionCode=3`). GitHub Actions publishes `ANTIVIRUS-AL-AI-v0.3.0-debug.apk` with source commit, workflow run ID, signer-certificate fingerprint, and SHA-256 metadata. This debug APK is for testing only and is not a production-signed release package. Google Play Billing 9.1.0, regional offer display, and server-verified trial/subscription entitlement code are integrated on this development PR. Checkout remains disabled until the Play Console product/base plans, service-account permissions and Worker secret, D1 migration, and Worker deployment are configured and verified. No real payment has been enabled.
+The Android package version is `0.3.0` (`versionCode=3`). GitHub Actions publishes `ANTIVIRUS-AL-AI-v0.3.0-debug.apk` with source commit, workflow run ID, signer-certificate fingerprint, and SHA-256 metadata. This debug APK is for testing only and is not a production-signed release package. Cafe Bazaar Poolakey 2.3.0 and server-side subscription verification are integrated for the Cafe Bazaar release path. Checkout remains disabled until Pishkhan SKUs, Developer API OAuth credentials, D1 migration and Worker secrets are configured and verified. No real payment has been enabled.
 
 
 ## Reviewed Android content-rule seed

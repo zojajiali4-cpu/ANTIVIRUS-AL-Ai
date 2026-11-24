@@ -1,85 +1,52 @@
-# Google Play release-readiness checklist
+# Cafe Bazaar Release Readiness — ANTIVIRUS AL AI
 
-Last reviewed: 2026-11-18
+The first release target is Cafe Bazaar. Google Play Billing and Play Console are not the payment or publication path for this build.
 
-This document tracks release gates for ANTIVIRUS AL AI. A successful debug APK build is not a Play-ready release.
+## Android baseline
 
-## Current technical baseline
+- Application ID: com.antivirusalai.
+- Candidate version: 0.4.0, versionCode 4.
+- Minimum SDK: API 26; target SDK: API 36.
+- Billing SDK: official Cafe Bazaar Poolakey 2.3.0.
+- Subscription SKUs: alai_plus_monthly and alai_plus_annual.
+- Bazaar submission requires a release APK signed with the publisher's permanent key. Debug APKs are testing artifacts only.
 
-- Android application ID: `com.antivirusalai`.
-- Current development version: `0.3.0`, version code `3`.
-- Compile SDK / target SDK: Android 16 / API 36.
-- Minimum SDK: API 26.
-- CI now builds an unsigned release AAB preflight artifact after the APK, quality, and API 33/35 emulator jobs pass. It validates bundle structure only and is not uploadable to Google Play.
-- No production signing keystore or signed release AAB is configured in this repository.
+## Before submission
 
-## Required before a public Play submission
+### App correctness and security
+- [ ] Unit tests, lint, APK build, and API 33/35 emulator smoke tests pass on the exact release commit.
+- [ ] Verify permission-denial behavior, low storage, large files, Doze, network loss and damaged quarantine entries.
+- [ ] Publish a reviewed signed production threat feed before making detection coverage claims.
+- [ ] Keep ML detection, live phishing detection, VPN/network protection and full real-time protection claims disabled unless implemented and independently validated.
+- [ ] Confirm all visible descriptions match implemented behavior.
 
-### 1. Security and product validation
+### Permissions and Android behavior
+- [ ] Review MANAGE_EXTERNAL_STORAGE, QUERY_ALL_PACKAGES, foreground-service and notification declarations against Android requirements and Cafe Bazaar review rules.
+- [ ] Provide a clear user-initiated rationale before broad file access or installed-app inventory.
+- [ ] Ensure limited mode remains useful when permission is denied.
+- [ ] Ensure monitoring is user-enabled, visible, stoppable and never restarted after user disables it.
+- [ ] Test supported Android versions, with special attention to storage and background execution.
 
-- [ ] Complete Android unit tests, lint, APK assembly, and API 33/35 emulator smoke tests for the exact release commit. API 36 remains advisory until the hosted emulator's Package Manager/ADB instability is resolved.
-- [ ] Validate threat-feed parsing, signatures, freshness, expiry, rollback, source provenance, and truncated-feed behavior.
-- [ ] Keep provider publishing disabled until each provider's commercial terms and required authorization are confirmed.
-- [ ] Complete independent malware-detection evaluation and application security review before making performance or detection-rate claims.
-- [ ] Test cancellation, low storage, large files, permission denial, Doze, network loss, and damaged quarantine entries.
-- [ ] Confirm that all visible feature descriptions match implemented functionality. Network IOC parsing is not active VPN/DNS/browser protection.
+### Cafe Bazaar billing
+- [ ] Create exact monthly/annual SKUs in Pishkhan.
+- [ ] Configure trial duration, recurring billing, prices, renewal and refund terms.
+- [ ] Complete Developer API OAuth authorization and store refresh token only in Worker secrets.
+- [ ] Apply D1 migration 0003_bazaar_billing.sql.
+- [ ] Deploy Worker and verify Bazaar API access before enabling checkout.
+- [ ] Test purchase, cancellation, expiry, restore, invalid token and server outage on a real device.
 
-### 2. Google Play permissions and disclosures
+### Privacy and listing
+- [ ] Publish a public privacy policy at an accessible HTTPS URL and include it inside the app.
+- [ ] Prepare Persian title, short/full description, screenshots, icon, category, age/content rating and support contact.
+- [ ] Disclose optional SHA-256 upload and ordinary connection metadata.
+- [ ] Never describe a hash no-match as proof of safety.
+- [ ] Do not claim full malware removal, private-data scanning, live network protection, behavioral sandboxing or configured ML detection.
 
-The current manifest requests `MANAGE_EXTERNAL_STORAGE` and `QUERY_ALL_PACKAGES`. Both access sensitive user/device information and require a careful Play policy review.
+### Release artifact
+- [ ] Create and securely back up publisher's permanent signing keystore.
+- [ ] Never commit keystore/passwords or send them in chat.
+- [ ] Build release APK with permanent key; verify package, version, target SDK, manifest, archive and signer fingerprint.
+- [ ] Use the same key for every update.
+- [ ] Install and test signed APK on a physical device before submission.
 
-- [ ] Confirm that broad shared-storage access is essential to the app's core antivirus function and that Storage Access Framework / MediaStore alternatives are insufficient.
-- [ ] Submit the required All files access declaration and provide a clear in-app explanation before requesting the special access.
-- [ ] Submit the package-visibility declaration and explain why broad installed-app inventory is core to the antivirus feature.
-- [ ] Keep installed-app inventory local and never use it for advertising or analytics monetization.
-- [ ] Review foreground-service special-use declarations and ensure the service is user-initiated, transparent, stoppable, and accurately described.
-- [ ] Verify that denied permissions leave a useful limited mode and are never repeatedly or coercively requested.
-
-### 3. Privacy and store listing
-
-- [ ] Publish a public privacy-policy page and link it both in the app and in Play Console.
-- [ ] Complete an accurate Data safety form based on actual app behavior and all included SDKs/libraries.
-- [ ] Prepare store title, short/full descriptions, screenshots, app icon, feature graphic, support contact, and content rating.
-- [ ] Describe scan coverage and limitations honestly; do not claim full real-time protection or guaranteed malware removal.
-- [ ] Provide a support channel: `Zojajiali4@gmail.com`.
-
-### 4. Store, cloud service and intelligence activation
-
-- [x] Implement Google Play Billing client, dynamically localized offer display, server-side purchase verification/acknowledgement, restore, and subscription-management entry points on the regional trial development PR. [ ] Before activation, configure Play Console product/base plans/offers and region availability, authorize the dedicated Android Publisher service account, set both `PLAY_SERVICE_ACCOUNT_JSON` and `PLUS_ENTITLEMENT_HMAC_SECRET` Worker secrets, apply the D1 migration, deploy the Worker, and complete end-to-end internal-track tests. Until those operational gates pass, checkout must remain disabled and no payment or entitlement may be implied.
-- [ ] Deploy and verify the Cloud Worker, D1 schema, rate limits, operational monitoring and privacy/retention disclosures before advertising cloud reputation as active.
-- [ ] Publish and install a reviewed, signed production threat feed and content-rule bundle. Built-in test indicators and the unconfigured ML scaffold are not a production detection dataset or model.
-- [ ] Keep offline URL-structure heuristics labelled as heuristic-only; do not market them as live phishing or domain-reputation protection.
-
-### 5. Regional trial commerce configuration
-
-- [ ] Create Google Play subscription product `alai_plus` with auto-renewing base plans `monthly` and `annual`.
-- [ ] Configure free-trial offer phases and eligible countries/regions in Play Console. Do not hardcode a trial duration, currency, price or regional list in the APK.
-- [ ] Restrict the first regional rollout to markets for which merchant registration, payout, tax, consumer-law, privacy and support obligations are cleared by the account owner.
-- [ ] Configure the dedicated Android Publisher service account with minimum required access and store its JSON only as Cloudflare Worker secret `PLAY_SERVICE_ACCOUNT_JSON`.
-- [ ] Apply D1 migration `0002_play_billing.sql`; deploy and verify the Worker readiness endpoint.
-- [ ] Test eligible and ineligible accounts, new trial, paid plan, restore, cancel, grace period, expiry, pending payment, duplicate purchase and service outage before enabling checkout.
-
-### 6. Release artifact and account
-
-- [ ] Complete the unsigned AAB preflight and inspect its package/version/permissions for the exact release commit.
-- [ ] Create a production-signed Android App Bundle (AAB), not a debug APK or unsigned preflight artifact.
-- [ ] Use a production signing key controlled by the authorized account owner. Never commit it or send it in chat.
-- [ ] Configure protected CI secrets for signing only after the key is securely backed up.
-- [ ] Increment versionCode and set the intended release version.
-- [ ] Verify the signed AAB, package ID, version, permissions, and SHA-256.
-- [ ] Upload to internal testing first, install from Play, and complete a device test before expanding rollout.
-- [ ] Complete Play Console declarations and review any policy warnings before requesting production review.
-
-## Target API requirement
-
-As of this review, Google Play requires new apps and updates to target Android 16 (API 36) or higher from 31 August 2026. The current target API is 36, so the target-SDK floor is met; this does not waive permission declarations or other review requirements.
-
-## Official references
-
-- Target API requirements: https://support.google.com/googleplay/android-developer/answer/11926878
-- Sensitive permissions and declarations: https://support.google.com/googleplay/android-developer/answer/16558241
-- Data safety form: https://support.google.com/googleplay/android-developer/answer/10787469
-
-## Release decision
-
-Do not mark the app production-ready or submit a public release until all required gates above are verified for the exact release commit. Internal debug artifacts may be shared only as test builds and must be labelled accordingly.
+Broad file access and package visibility need review; an antivirus label alone does not guarantee approval. A green debug build is not public-release readiness.

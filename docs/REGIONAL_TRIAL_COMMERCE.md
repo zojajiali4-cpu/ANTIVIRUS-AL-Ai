@@ -1,49 +1,53 @@
-# Regional Trial Commerce — ANTIVIRUS AL AI v1.0
+# Cafe Bazaar Subscription Commerce — ANTIVIRUS AL AI v1.0
 
-## Product policy
+- First distribution: Cafe Bazaar (Android).
+- Billing SDK: official Poolakey 2.3.0.
+- Package: com.antivirusalai.
+- Free tier: local file/APK scanning, evidence-based reports and local quarantine.
+- PLUS: optional cloud SHA-256 reputation; each lookup still requires separate user consent.
+- Monthly SKU: alai_plus_monthly. Annual SKU: alai_plus_annual.
+- Trial duration, eligibility, localized price and renewal terms are configured in Pishkhan, never hardcoded in the APK.
 
-- Launch approach: regional, Android first.
-- Revenue model: trial-first subscription, with monthly and annual auto-renewing plans.
-- Product identifier: `alai_plus`.
-- Base plan identifiers: `monthly` and `annual`.
-- Free tier: selected-file and supported APK scanning, local evidence-based reports, and private quarantine remain available without a subscription.
-- PLUS: optional cloud SHA-256 reputation and expanded online intelligence. Each hash lookup remains a separate, explicit user-consent action; subscription entitlement does not silently authorize data transmission.
+## Purchase verification
 
-The current development integration deliberately does not include PRO FAMILY or lifetime plans. Those require separate product, device-sharing, entitlement and support designs and must not be exposed as purchasable until implemented.
+Poolakey connects to the installed Cafe Bazaar app and fetches subscription SKU details. The app checks trial eligibility and launches Bazaar's native subscription flow. It sends only the selected SKU and purchase token to the first-party HTTPS Worker. The Worker refreshes its OAuth access token using Cafe Bazaar Developer API credentials held only as Worker secrets, then validates the exact package, SKU and purchase token with Developer API v2. Access is granted only while validUntilTimestampMsec is in the future. A canceled auto-renewal remains entitled only until verified expiry. Expired, refunded, mismatched and unverifiable purchases fail closed. D1 stores only SHA-256 of the purchase token and minimal entitlement metadata; the raw token is never persisted. The Worker issues a signed PLUS cloud token with a maximum five-minute lifetime. Restore queries the current Bazaar account and verifies tokens again.
 
-## Regional price and trial rules
+Poolakey uses server-side verification (SecurityCheck.Disable) intentionally. Developer API credentials are never embedded in the APK.
 
-The app must not bundle a region list, currency, product price, discount, or trial duration. Google Play Console controls base-plan availability, regional pricing, and offer eligibility. The Android app obtains localized offer details from Google Play and displays the returned pricing phases in sequence. A free-trial label appears only when Google Play returns an eligible free-trial phase for that Play account. Google Play presents the legally binding payment and renewal terms before confirmation.
+## Pishkhan setup
 
-The regional launch matrix is configured in Play Console only after the account owner verifies merchant eligibility, settlement/payout support, local tax/VAT treatment, consumer cancellation/refund obligations, privacy requirements, store language/support coverage, and any restrictions on subscription marketing. Do not advertise an unavailable country as supported.
+Create the exact package and SKUs. Configure monthly/annual billing interval, price, auto-renewal and trial eligibility/duration. Create a Developer API client and complete OAuth authorization to obtain a refresh token. Test purchase, restore, cancellation and expiry on a real device with Cafe Bazaar installed.
 
-## Purchase and entitlement flow
+## Cloudflare Worker secrets
 
-1. The app queries `alai_plus` and the current Play account's eligible monthly/annual offers.
-2. The server readiness endpoint verifies the Android Publisher service account and confirms that the intended base plans exist and are ACTIVE. Until this succeeds, purchase buttons remain disabled.
-3. The app opens the native Google Play purchase sheet with a fresh offer token.
-4. The app sends the resulting purchase token to the first-party HTTPS Worker. It sends no file, scan sample, filename, filesystem path, or device app inventory.
-5. The Worker uses the Android Publisher API to validate the token, exact package, product, supported base plan, subscription state and expiry. It acknowledges a verified new purchase. The raw purchase token is not stored; only its SHA-256 digest and minimal entitlement metadata are persisted in D1.
-6. The app grants PLUS only after the server response confirms an allowed state and unexpired entitlement. The Worker also issues a signed, audience-scoped cloud-access bearer token with a maximum five-minute lifetime; the hash-reputation endpoint validates it independently, so changing or bypassing the app UI cannot unlock the API. Pending, on-hold, paused, expired, unrecognized, mismatched or unverifiable purchases do not unlock features.
-7. Restore re-queries subscriptions owned by the current Play account and verifies them again with the server. Cancellation and renewal are managed in Google Play; a canceled but unexpired subscription retains access until its verified expiry.
+Set through trusted Cloudflare dashboard/CLI. Never place values in Git, source code, APK, logs or chat.
 
-## Required Play Console setup
+- BAZAAR_CLIENT_ID
+- BAZAAR_CLIENT_SECRET
+- BAZAAR_REFRESH_TOKEN
+- BAZAAR_PACKAGE_NAME (exactly com.antivirusalai)
+- BAZAAR_MONTHLY_PRODUCT_ID (exactly alai_plus_monthly)
+- BAZAAR_ANNUAL_PRODUCT_ID (exactly alai_plus_annual)
+- PLUS_ENTITLEMENT_HMAC_SECRET (independent random secret, at least 32 bytes)
+- RATE_SALT remains independent.
 
-Create subscription `alai_plus` with auto-renewing base plans `monthly` and `annual`. Configure localized listings, prices and regional availability. Configure free-trial offer phases and eligibility per base plan; duration is a Play Console decision, not a code constant. Ensure the store listing and app accurately disclose trial conversion, recurring price, first payment date, renewal cadence, cancellation path, refund policy and applicable terms before a customer confirms.
+Apply cloud-api/migrations/0003_bazaar_billing.sql and deploy the Worker. Checkout stays disabled until the Worker can obtain a Bazaar access token and the app can query actual SKU details.
 
-The first launch should use a closed/internal testing track and licensed test accounts. Test a fresh eligible account, an ineligible account, a returning subscriber, a canceled-but-not-expired purchase, payment pending, grace period, on-hold, expired, duplicate purchase, restore after reinstall, offline/server outage and product-not-configured states.
+## Test matrix
 
-## Required Cloudflare setup
+Test Bazaar installed/signed-in/updated; missing/disconnected Bazaar; both SKU details; missing SKU; eligible/ineligible trial accounts; monthly/annual purchase; cancellation; refunded/mismatched product; restore after restart/reinstall; canceled-but-not-expired; expired; invalid token; OAuth, Developer API and D1 outage; duplicate restore; short-lived token expiry; cloud outage with offline scanning.
 
-- Set `PLAY_SERVICE_ACCOUNT_JSON` as a Worker secret only. Use a dedicated service account linked to the correct Play Console account with minimum required Android Publisher permissions. Never commit, log, paste into chat, or package the private key.
-- Set `PLUS_ENTITLEMENT_HMAC_SECRET` as a separate Worker secret with at least 32 bytes of cryptographically random data. It signs short-lived PLUS API tokens and must not be reused for rate limiting, feed signing, or Google service-account credentials.
-- Apply `cloud-api/migrations/0002_play_billing.sql` to the configured D1 database.
-- Deploy the Worker only after reviewed tests and account-owner approval.
-- Verify `/v1/billing/status` returns the intended active plans before enabling a real Play product/offer for testers.
-- Keep a rollback procedure for disabling checkout without disabling free offline scanning.
+## Release gates
 
-These account and production operations are intentionally not performed by this code change. No secret, D1 resource, Play Console product, regional price or production deployment has been created or changed by the repository commit.
+- [ ] Pishkhan products and trial terms configured.
+- [ ] Developer API OAuth client and refresh token configured.
+- [ ] Worker secrets and D1 migration installed.
+- [ ] Worker deployed and readiness endpoint verified.
+- [ ] Purchase/restore tested on physical device with Bazaar installed.
+- [ ] Android tests, lint and API 33/35 emulator smoke tests pass.
+- [ ] Publisher creates and backs up permanent signing keystore.
+- [ ] Release APK signed with permanent key; certificate fingerprint recorded.
+- [ ] Privacy policy, support contact, screenshots and accurate descriptions prepared.
+- [ ] Cafe Bazaar review completed.
 
-## Implementation and release status
-
-The development branch contains the Android Billing 9.1.0 client, localized eligible-offer display, price-phase rendering, secure purchase verification, acknowledgement, restore and a backend readiness gate. The Worker route and D1 migration are source changes only. End-to-end Play testing and production activation remain release gates. A green CI build alone does not prove that the Play Console product, merchant account, Worker credentials, D1 schema or real customer checkout are operational.
+No production payment, Pishkhan product, OAuth credential, Cloudflare secret, D1 resource, deployment or signing key is configured by these source changes.
