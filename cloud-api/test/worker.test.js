@@ -223,6 +223,33 @@ test("Cafe Bazaar subscription verification validates with Bazaar and issues a s
   assert.match(insert.params[0], /^[a-f0-9]{64}$/);
 });
 
+test("Cafe Bazaar purchase-token validation allows ordinary opaque tokens and rejects whitespace/control characters", async () => {
+  const env = bazaarEnvironment();
+  await withBazaarApi({
+    kind: "androidpublisher#subscriptionPurchase",
+    validUntilTimestampMsec: String(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    autoRenewing: true
+  }, async () => {
+    const response = await worker.fetch(request("/v1/billing/bazaar/verify", {
+      subscriptionId: BAZAAR_MONTHLY,
+      purchaseToken: "opaque-token-containing-s-and-x-123456789"
+    }), env);
+    assert.equal(response.status, 200);
+  });
+  const invalidTokens = [
+    "opaque-token-with whitespace-123456789",
+    "opaque-token-with" + String.fromCharCode(10) + "newline-123456789",
+    "opaque-token-with" + String.fromCharCode(1) + "control-123456789"
+  ];
+  for (const purchaseToken of invalidTokens) {
+    const response = await worker.fetch(request("/v1/billing/bazaar/verify", {
+      subscriptionId: BAZAAR_MONTHLY, purchaseToken
+    }), env);
+    assert.equal(response.status, 400);
+    assert.equal((await json(response)).error, "PURCHASE_TOKEN_INVALID");
+  }
+});
+
 test("Cafe Bazaar subscription verification rejects unknown product IDs before network access", async () => {
   const env = bazaarEnvironment();
   const response = await worker.fetch(

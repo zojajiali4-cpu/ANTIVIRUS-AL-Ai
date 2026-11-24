@@ -390,7 +390,7 @@ export default { async fetch(req,env){
      if(!isBazaarBillingConfigured(env)) return out({error:"BAZAAR_BILLING_NOT_CONFIGURED"},503);
      if(!bazaarSubscriptionIds(env).includes(subscriptionId)) return out({error:"SUBSCRIPTION_NOT_ALLOWED"},400);
      if(purchaseToken.length<20||purchaseToken.length>4096||
-        /[\\s\\x00-\\x1f\\x7f]/.test(purchaseToken)) return out({error:"PURCHASE_TOKEN_INVALID"},400);
+        /[\s\x00-\x1f\x7f]/.test(purchaseToken)) return out({error:"PURCHASE_TOKEN_INVALID"},400);
      const nowSeconds=Math.floor(Date.now()/1000);
      const accessToken=await fetchBazaarAccessToken(env);
      const verified=await fetchBazaarSubscription(env,accessToken,subscriptionId,purchaseToken);
