@@ -45,6 +45,7 @@ data class PlayBillingUiState(
     val purchaseInventoryLoaded: Boolean = false,
     val entitled: Boolean = false,
     val isTrial: Boolean = false,
+    val cloudAccessToken: String? = null,
     val currentBasePlanId: String? = null,
     val expiresAtEpochMillis: Long? = null,
     val message: String? = null
@@ -83,12 +84,16 @@ class PlayBillingManager(
                     publish(uiState.copy(connected = true, loading = true, message = null))
                     refresh()
                 } else {
-                    publish(uiState.copy(connected = false, loading = false,
+                    publish(uiState.copy(connected = false, loading = false, entitled = false,
+                        isTrial = false, cloudAccessToken = null, currentBasePlanId = null,
+                        expiresAtEpochMillis = null,
                         message = "Google Play billing is unavailable on this device or account."))
                 }
             }
             override fun onBillingServiceDisconnected() {
-                if (!closed) publish(uiState.copy(connected = false, loading = false,
+                if (!closed) publish(uiState.copy(connected = false, loading = false, entitled = false,
+                    isTrial = false, cloudAccessToken = null, currentBasePlanId = null,
+                    expiresAtEpochMillis = null,
                     message = "Google Play connection was interrupted. Reopen the Store to retry."))
             }
         })
@@ -103,7 +108,9 @@ class PlayBillingManager(
         purchaseInventoryLoaded = false
         pendingPurchaseFound = false
         purchaseVerificationFailed = false
-        publish(uiState.copy(loading = true, checkoutReady = false, offers = emptyList(), message = null))
+        publish(uiState.copy(loading = true, checkoutReady = false, offers = emptyList(),
+            entitled = false, isTrial = false, cloudAccessToken = null,
+            currentBasePlanId = null, expiresAtEpochMillis = null, message = null))
         queryBillingStatus()
         queryCatalog()
         queryOwnedPurchases()
@@ -114,7 +121,9 @@ class PlayBillingManager(
         purchaseInventoryLoaded = false
         pendingPurchaseFound = false
         purchaseVerificationFailed = false
-        publish(uiState.copy(loading = true, checkoutReady = false, message = null))
+        publish(uiState.copy(loading = true, checkoutReady = false, entitled = false,
+            isTrial = false, cloudAccessToken = null, currentBasePlanId = null,
+            expiresAtEpochMillis = null, message = null))
         queryOwnedPurchases(showRestoreMessage = true)
     }
 
@@ -309,7 +318,7 @@ class PlayBillingManager(
             pendingPurchaseFound = owned.any { it.purchaseState == Purchase.PurchaseState.PENDING }
             if (owned.isEmpty()) {
                 publish(uiState.copy(
-                    loading = false, entitled = false, isTrial = false,
+                    loading = false, entitled = false, isTrial = false, cloudAccessToken = null,
                     currentBasePlanId = null, expiresAtEpochMillis = null,
                     message = if (showRestoreMessage) {
                         "No active ANTIVIRUS AL AI subscription was found for this Play account."
@@ -329,7 +338,8 @@ class PlayBillingManager(
             Purchase.PurchaseState.PENDING -> {
                 pendingPurchaseFound = true
                 publish(uiState.copy(
-                    loading = false, entitled = false, checkoutReady = false,
+                    loading = false, entitled = false, checkoutReady = false, isTrial = false,
+                    cloudAccessToken = null, currentBasePlanId = null, expiresAtEpochMillis = null,
                     message = "Payment is pending. Premium access stays locked until Google Play confirms it."
                 ))
                 publishAvailableOffers()
@@ -337,7 +347,9 @@ class PlayBillingManager(
             Purchase.PurchaseState.PURCHASED -> {
                 val token = purchase.purchaseToken
                 if (!processingTokens.add(token)) return
-                publish(uiState.copy(loading = true, message = "Verifying the purchase securely with Google Play…"))
+                publish(uiState.copy(loading = true, entitled = false, isTrial = false,
+                    cloudAccessToken = null, currentBasePlanId = null, expiresAtEpochMillis = null,
+                    message = "Verifying the purchase securely with Google Play…"))
                 scope.launch {
                     try {
                         val entitlement = withContext(Dispatchers.IO) {
@@ -347,6 +359,7 @@ class PlayBillingManager(
                             loading = false,
                             entitled = entitlement.entitled,
                             isTrial = entitlement.isTrial && entitlement.entitled,
+                            cloudAccessToken = entitlement.cloudAccessToken.takeIf { entitlement.entitled },
                             currentBasePlanId = entitlement.basePlanId.takeIf { entitlement.entitled },
                             expiresAtEpochMillis = entitlement.expiresAtEpochMillis.takeIf { entitlement.entitled },
                             message = if (entitlement.entitled) {
@@ -360,7 +373,7 @@ class PlayBillingManager(
                         purchaseVerificationFailed = true
                         publish(uiState.copy(
                             loading = false, entitled = false, checkoutReady = false, isTrial = false,
-                            currentBasePlanId = null, expiresAtEpochMillis = null,
+                            cloudAccessToken = null, currentBasePlanId = null, expiresAtEpochMillis = null,
                             message = error.message ?: "Secure purchase verification is unavailable. Restore purchases to retry."
                         ))
                     } finally {

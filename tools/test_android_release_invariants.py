@@ -88,17 +88,21 @@ class AndroidReleaseInvariantTests(unittest.TestCase):
             "result = it",
             "fa = fa",
             "premiumAccess = premiumAccess",
+            "cloudAccessToken = cloudAccessToken",
             "onOpenStore = onOpenStore",
         ):
             with self.subTest(argument=argument):
                 self.assertIn(argument, card_arguments)
 
         self.assertIn("premiumAccess = billingUiState.entitled", app_source)
+        self.assertIn("cloudAccessToken = billingUiState.cloudAccessToken", app_source)
         self.assertIn("onOpenStore = { activeTab = MainTab.STORE.key }", app_source)
-        self.assertIn("if (!premiumAccess)", card_source)
+        self.assertIn("if (!premiumAccess || entitlementToken == null)", card_source)
         self.assertIn("Button(onClick = onOpenStore)", card_source)
         self.assertIn("showConsent = true", card_source)
-        self.assertIn("CloudThreatApi.checkSha256(digest)", card_source)
+        self.assertIn("CloudThreatApi.checkSha256(digest, entitlementToken)", card_source)
+        cloud_api = (ROOT / "app/src/main/java/com/antivirusalai/CloudThreatApi.kt").read_text(encoding="utf-8")
+        self.assertIn('setRequestProperty("Authorization", "Bearer " + accessToken)', cloud_api)
 
         self.assertTrue((ROOT / "app/src/main/java/com/antivirusalai/CloudThreatApi.kt").is_file())
         self.assertTrue((ROOT / "app/src/main/java/com/antivirusalai/CloudHashReputationCard.kt").is_file())

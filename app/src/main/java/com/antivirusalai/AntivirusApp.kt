@@ -604,6 +604,7 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
                                 errorMessage = errorMessage,
                                 notice = notice,
                                 premiumAccess = billingUiState.entitled,
+                                cloudAccessToken = billingUiState.cloudAccessToken,
                                 onOpenStore = { activeTab = MainTab.STORE.key },
                                 quarantining = quarantining,
                                 onFileScan = launchFileScan,
@@ -2183,6 +2184,7 @@ private fun ScanCenterScreen(
     errorMessage: String?,
     notice: String?,
     premiumAccess: Boolean,
+    cloudAccessToken: String?,
     onOpenStore: () -> Unit,
     quarantining: Boolean,
     onFileScan: () -> Unit,
@@ -2317,6 +2319,7 @@ private fun ScanCenterScreen(
             CloudHashReputationCard(
                 result = it, fa = fa,
                 premiumAccess = premiumAccess,
+                cloudAccessToken = cloudAccessToken,
                 onOpenStore = onOpenStore
             )
         }

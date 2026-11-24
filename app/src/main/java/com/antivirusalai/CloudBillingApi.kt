@@ -16,7 +16,8 @@ data class CloudSubscriptionEntitlement(
     val productId: String,
     val basePlanId: String,
     val isTrial: Boolean,
-    val expiresAtEpochMillis: Long
+    val expiresAtEpochMillis: Long,
+    val cloudAccessToken: String? = null
 )
 
 object CloudBillingApi {
@@ -73,50 +74,64 @@ object CloudBillingApi {
             val status = connection.responseCode
             val responseStream = if (status in 200..299) connection.inputStream else connection.errorStream
             val responseText = responseStream?.let(::readBounded).orEmpty()
-            val root = runCatching { JSONObject(responseText) }.getOrElse {
-                throw IllegalStateException("The billing service returned an invalid response.")
-            }
             if (status == 503) {
                 throw IllegalStateException("Purchase verification is not configured or temporarily unavailable.")
             }
             if (status !in 200..299) throw IllegalStateException("Google Play could not verify this purchase.")
-            if (!root.optBoolean("ok", false)) {
-                val error = root.optString("error")
-                throw IllegalStateException(
-                    when (error) {
-                        "PURCHASE_NOT_ENTITLED" -> "This subscription does not currently grant access."
-                        "PURCHASE_ACKNOWLEDGEMENT_PENDING" -> "Google Play confirmation is pending. Restore purchases to retry."
-                        else -> "This purchase could not be verified."
-                    }
-                )
-            }
-            val basePlanId = root.optString("basePlanId", "")
-            val expiresAt = root.optLong("expiresAtEpochMillis", 0L)
-            val state = root.optString("subscriptionState", "SUBSCRIPTION_STATE_UNSPECIFIED")
-            require(basePlanId in setOf("monthly", "annual")) {
-                "The verified subscription base plan is not supported."
-            }
-            require(expiresAt > 0L) { "The verified subscription expiry is missing." }
-            val verifiedProductId = root.optString("productId", "")
-            require(verifiedProductId == productId) {
-                "The verified purchase belongs to a different subscription product."
-            }
-            val stateAllowsAccess = state in setOf(
-                "SUBSCRIPTION_STATE_ACTIVE",
-                "SUBSCRIPTION_STATE_IN_GRACE_PERIOD",
-                "SUBSCRIPTION_STATE_CANCELED"
-            )
-            val isCurrentlyEntitled = root.optBoolean("entitled", false) &&
-                stateAllowsAccess && expiresAt > System.currentTimeMillis()
-            CloudSubscriptionEntitlement(
-                entitled = isCurrentlyEntitled,
-                subscriptionState = state,
-                productId = verifiedProductId,
-                basePlanId = basePlanId,
-                isTrial = root.optBoolean("isTrial", false) && isCurrentlyEntitled,
-                expiresAtEpochMillis = expiresAt
-            )
+            parseSubscriptionEntitlementPayload(responseText)
         } finally { connection.disconnect() }
+    }
+
+    internal fun parseSubscriptionEntitlementPayload(responseText: String): CloudSubscriptionEntitlement {
+        val root = runCatching { JSONObject(responseText) }.getOrElse {
+            throw IllegalArgumentException("The billing service returned an invalid response.")
+        }
+        require(root.optBoolean("ok", false)) {
+            when (root.optString("error")) {
+                "PURCHASE_NOT_ENTITLED" -> "This subscription does not currently grant access."
+                "PURCHASE_ACKNOWLEDGEMENT_PENDING" -> "Google Play confirmation is pending. Restore purchases to retry."
+                else -> "This purchase could not be verified."
+            }
+        }
+        val basePlanId = root.optString("basePlanId", "")
+        require(basePlanId in setOf("monthly", "annual")) {
+            "The verified subscription base plan is not supported."
+        }
+        val expiresAt = root.optLong("expiresAtEpochMillis", 0L)
+        require(expiresAt > 0L) { "The verified subscription expiry is missing." }
+        val productId = BuildConfig.ALAI_SUBSCRIPTION_PRODUCT_ID
+        val verifiedProductId = root.optString("productId", "")
+        require(verifiedProductId == productId) {
+            "The verified purchase belongs to a different subscription product."
+        }
+        val state = root.optString("subscriptionState", "SUBSCRIPTION_STATE_UNSPECIFIED")
+        val stateAllowsAccess = state in setOf(
+            "SUBSCRIPTION_STATE_ACTIVE",
+            "SUBSCRIPTION_STATE_IN_GRACE_PERIOD",
+            "SUBSCRIPTION_STATE_CANCELED"
+        )
+        val isCurrentlyEntitled = root.optBoolean("entitled", false) &&
+            stateAllowsAccess && expiresAt > System.currentTimeMillis()
+        val cloudAccessToken = if (isCurrentlyEntitled) {
+            validatePlusAccessToken(root.optString("cloudAccessToken", ""))
+        } else null
+        return CloudSubscriptionEntitlement(
+            entitled = isCurrentlyEntitled,
+            subscriptionState = state,
+            productId = verifiedProductId,
+            basePlanId = basePlanId,
+            isTrial = root.optBoolean("isTrial", false) && isCurrentlyEntitled,
+            expiresAtEpochMillis = expiresAt,
+            cloudAccessToken = cloudAccessToken
+        )
+    }
+
+    internal fun validatePlusAccessToken(value: String): String {
+        require(value.length in 64..4096 &&
+            value.matches(Regex("[A-Za-z0-9_-]{20,2048}\\.[A-Za-z0-9_-]{40,128}"))) {
+            "A valid server-issued PLUS access token is required."
+        }
+        return value
     }
 
     internal fun parseBillingStatusPayload(responseText: String): CloudBillingStatus {

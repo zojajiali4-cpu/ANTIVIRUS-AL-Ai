@@ -36,9 +36,13 @@ fun CloudHashReputationCard(
     result: ScanResult,
     fa: Boolean,
     premiumAccess: Boolean,
+    cloudAccessToken: String?,
     onOpenStore: () -> Unit
 ) {
-    if (!premiumAccess) {
+    val entitlementToken = cloudAccessToken?.let {
+        runCatching { CloudBillingApi.validatePlusAccessToken(it) }.getOrNull()
+    }
+    if (!premiumAccess || entitlementToken == null) {
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
@@ -188,7 +192,7 @@ fun CloudHashReputationCard(
                         scope.launch {
                             try {
                                 assessment = withContext(Dispatchers.IO) {
-                                    CloudThreatApi.checkSha256(digest)
+                                    CloudThreatApi.checkSha256(digest, entitlementToken)
                                 }
                             } catch (cancelled: CancellationException) {
                                 throw cancelled

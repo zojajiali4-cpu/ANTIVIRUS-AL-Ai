@@ -25,6 +25,43 @@ class CloudBillingApiTest {
         CloudBillingApi.validatePurchaseToken("purchase-token-from-google-play-123456\n")
     }
     @Test
+    fun acceptsWellFormedServerIssuedPlusAccessToken() {
+        val token = "eyJ2IjoxLCJhdWQiOiJhbGFpIn0." + "A".repeat(43)
+        assertEquals(token, CloudBillingApi.validatePlusAccessToken(token))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsMalformedServerIssuedPlusAccessToken() {
+        CloudBillingApi.validatePlusAccessToken("tampered.or-invalid")
+    }
+
+    @Test
+    fun grantsCloudEntitlementOnlyWhenServerAlsoProvidesAccessToken() {
+        val expiry = System.currentTimeMillis() + 60_000L
+        val token = "eyJ2IjoxLCJhdWQiOiJhbGFpIn0." + "A".repeat(43)
+        val payload = """{"ok":true,"entitled":true,"subscriptionState":"SUBSCRIPTION_STATE_ACTIVE","productId":"alai_plus","basePlanId":"monthly","isTrial":true,"expiresAtEpochMillis":$expiry,"cloudAccessToken":"$token"}"""
+        val result = CloudBillingApi.parseSubscriptionEntitlementPayload(payload)
+        assertEquals(true, result.entitled)
+        assertEquals(token, result.cloudAccessToken)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun refusesActiveEntitlementWithoutServerIssuedCloudToken() {
+        val expiry = System.currentTimeMillis() + 60_000L
+        val payload = """{"ok":true,"entitled":true,"subscriptionState":"SUBSCRIPTION_STATE_ACTIVE","productId":"alai_plus","basePlanId":"monthly","expiresAtEpochMillis":$expiry}"""
+        CloudBillingApi.parseSubscriptionEntitlementPayload(payload)
+    }
+
+    @Test
+    fun doesNotGrantCloudEntitlementForNonEntitledSubscription() {
+        val expiry = System.currentTimeMillis() + 60_000L
+        val payload = """{"ok":true,"entitled":false,"subscriptionState":"SUBSCRIPTION_STATE_ON_HOLD","productId":"alai_plus","basePlanId":"monthly","expiresAtEpochMillis":$expiry}"""
+        val result = CloudBillingApi.parseSubscriptionEntitlementPayload(payload)
+        assertEquals(false, result.entitled)
+        assertEquals(null, result.cloudAccessToken)
+    }
+
+    @Test
     fun billingStatusAcceptsOnlyKnownActivePlansForTheExpectedProduct() {
         val result = CloudBillingApi.parseBillingStatusPayload(
             """{"ok":true,"checkoutReady":true,"productId":"alai_plus","activeBasePlans":["monthly","annual","unknown"]}"""
