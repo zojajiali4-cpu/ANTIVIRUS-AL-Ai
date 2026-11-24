@@ -81,7 +81,7 @@ class AndroidReleaseInvariantTests(unittest.TestCase):
         # Keep the billing entitlement and store-navigation callbacks connected
         # to the optional cloud-reputation card. Match named arguments rather
         # than formatting so legitimate UI refactors do not stale this guard.
-        card_call = re.search(r"CloudHashReputationCard\\s*\\(([^)]*)\\)", app_source, re.DOTALL)
+        card_call = re.search(r"CloudHashReputationCard\s*\(([^)]*)\)", app_source, re.DOTALL)
         self.assertIsNotNone(card_call, "The scan result must render the cloud-reputation card")
         card_arguments = card_call.group(1)
         for argument in (
