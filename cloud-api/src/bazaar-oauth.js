@@ -177,6 +177,7 @@ async function callback(req, env) {
   const code = url.searchParams.get("code") || "";
   const cookie = cookieValue(req.headers.get("cookie"), COOKIE);
   const clearCookie = COOKIE + "=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Lax";
+  const redirectUri = env.BAZAAR_OAUTH_REDIRECT_URI || DEFAULT_REDIRECT_URI;
   if (!state || state.length > 128 || !equalSecret(state, cookie) ||
       !/^[\x21-\x7E]{8,4096}$/.test(code)) {
     return html("پاسخ مجوزدهی معتبر نیست؛ فرایند را دوباره آغاز کنید.", 400);
