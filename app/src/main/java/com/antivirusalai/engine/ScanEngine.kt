@@ -384,6 +384,29 @@ object ScanEngine {
                 }
             }
 
+            val noKnownIndicatorReady = ScanVerdictPolicy.canDeclareNoKnownIndicator(
+                ScanVerdictReadiness(
+                    threatFeedAvailable = threatFeedStage.completed && currentThreatFeed != null,
+                    threatFeedFresh = threatFeedStatusStage.completed &&
+                        threatFeedStatus.freshness == ThreatFeedFreshness.UP_TO_DATE,
+                    threatFeedNotTruncated = currentThreatFeed?.truncated != true,
+                    signedContentRulesAvailable = contentBundleStage.completed && contentBundle != null,
+                    nativeContentEngineComplete = nativeInitStage.completed &&
+                        contentEngineState == ContentEngineState.COMPLETE,
+                    staticAnalysisSupported = staticStage.completed && staticReport.supported,
+                    staticAnalysisComplete = staticReport.complete,
+                    requiredStagesCompleted = localReputationStage.completed &&
+                        eicarStage.completed && apkStage.completed &&
+                        permissionStage.completed && fusionStage.completed &&
+                        qualifiedRulesStage.completed && partialRulesStage.completed &&
+                        mlStage.completed && mlResult.state != MlModelState.ERROR,
+                    noKnownThreatMatches = threatMatch == null && localMatch == null &&
+                        !eicarMatch && !selfTestMatch && matchedContentRules.isEmpty() &&
+                        partialRulesStage.value.isNullOrEmpty() && !mlResult.highRisk &&
+                        !combinedRisk.suspicious
+                )
+            )
+
             val verdict = when {
                 threatMatch?.classification == ThreatClassification.MALWARE -> ScanVerdict.KNOWN_MALWARE
                 contentRuleVerdict == ScanVerdict.KNOWN_MALWARE -> ScanVerdict.KNOWN_MALWARE
@@ -418,6 +441,7 @@ object ScanEngine {
                 }
                 mlResult.highRisk -> ScanVerdict.SUSPICIOUS
                 combinedRisk.suspicious -> ScanVerdict.SUSPICIOUS
+                noKnownIndicatorReady -> ScanVerdict.NO_KNOWN_INDICATOR
                 staticReport.supported || apk != null -> ScanVerdict.INCOMPLETE_THREAT_INTELLIGENCE
                 else -> ScanVerdict.UNSUPPORTED_FILE
             }
