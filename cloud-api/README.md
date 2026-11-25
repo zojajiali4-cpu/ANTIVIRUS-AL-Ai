@@ -49,10 +49,13 @@ Set these with Wrangler's secret manager. Never commit their values or paste the
 
 - `BAZAAR_CLIENT_ID`
 - `BAZAAR_CLIENT_SECRET`
-- `BAZAAR_REFRESH_TOKEN`
+- `BAZAAR_OAUTH_SETUP_KEY` (independent random secret, at least 32 characters)
+- `BAZAAR_TOKEN_ENCRYPTION_KEY` (32 random bytes encoded as unpadded base64url)
 - `PLUS_ENTITLEMENT_HMAC_SECRET` (independent random secret, at least 32 bytes)
 - `RATE_SALT` (independent random secret, at least 32 bytes)
 - `ADMIN_API_KEY` (when publishing signed feeds)
+
+A plaintext `BAZAAR_REFRESH_TOKEN` secret is not required. Register the exact callback URI `https://antivirus-al-ai-api.zojajiali4.workers.dev/v1/billing/bazaar/oauth/callback` in the Bazaar Developer API client. After applying migrations `0001_bazaar_billing.sql` and `0002_bazaar_oauth.sql` and deploying the Worker, open `/v1/billing/bazaar/oauth/start` on the Worker host and submit the setup key through its HTTPS form. The Worker validates a one-time state bound to a secure HttpOnly cookie, exchanges the code server-side and stores the refresh token AES-GCM encrypted in D1. Refresh-token rotation is also persisted encrypted. Never put credentials or tokens in a URL, GitHub, logs, or chat.
 
 The non-secret `wrangler.toml` variables pin package `com.antivirusalai` and subscription SKUs `alai_plus_monthly` / `alai_plus_annual`. Create these products and regional prices in Pishkhan before enabling checkout.
 
@@ -62,4 +65,4 @@ Apply the migration:
 wrangler d1 migrations apply antivirus-al-ai-threat-intel --remote
 ```
 
-The new Bazaar routes are `GET /v1/billing/bazaar/status` and `POST /v1/billing/bazaar/verify`. Checkout remains disabled until the Worker can authenticate to Bazaar and the client receives matching SKU details from Poolakey. This source change does not create products, authorize a Developer API client, obtain credentials, set Worker secrets, apply the production migration, or deploy the Worker.
+The Bazaar routes are `GET /v1/billing/bazaar/status`, `POST /v1/billing/bazaar/verify`, and the owner-operated OAuth setup/callback routes `/v1/billing/bazaar/oauth/start` and `/v1/billing/bazaar/oauth/callback`. Checkout remains disabled until the Worker can authenticate to Bazaar and the client receives matching SKU details from Poolakey. This source change does not create products, authorize a Developer API client, obtain credentials, set Worker secrets, apply the production migration, or deploy the Worker.
