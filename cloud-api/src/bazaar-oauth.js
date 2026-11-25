@@ -147,7 +147,8 @@ async function start(req, env) {
   if (parsed.protocol !== "https:" || parsed.pathname !== "/v1/billing/bazaar/oauth/callback" ||
       req.headers.get("Origin") !== parsed.origin) return html("درخواست مبدأ نامعتبر است.", 403);
   if (!env.DB || !env.BAZAAR_CLIENT_ID || !env.BAZAAR_CLIENT_SECRET ||
-      !env.BAZAAR_OAUTH_SETUP_KEY || !env.BAZAAR_TOKEN_ENCRYPTION_KEY) {
+      typeof env.BAZAAR_OAUTH_SETUP_KEY !== "string" || env.BAZAAR_OAUTH_SETUP_KEY.length < 32 ||
+      !env.BAZAAR_TOKEN_ENCRYPTION_KEY) {
     return html("تنظیمات اتصال سرور کامل نیست.", 503);
   }
   try { await encryptionKey(env); } catch { return html("کلید رمزنگاری سرور معتبر نیست.", 503); }
@@ -158,6 +159,7 @@ async function start(req, env) {
   const state = base64Url(crypto.getRandomValues(new Uint8Array(32)));
   const stateHash = await sha256Hex(state);
   const now = Math.floor(Date.now() / 1000);
+  await env.DB.prepare("DELETE FROM bazaar_oauth_states WHERE expires_at<=?").bind(now).run();
   await env.DB.prepare(
     "INSERT INTO bazaar_oauth_states(state_hash,expires_at,created_at) VALUES(?,?,?)"
   ).bind(stateHash, now + 600, now).run();
