@@ -119,7 +119,7 @@ async function withBazaarApi(subscription, callback, { tokenStatus = 200, subscr
   const calls = [];
   globalThis.fetch = async (input, init = {}) => {
     const url = String(input);
-    calls.push({ url, method: init.method || "GET", body: init.body });
+    calls.push({ url, method: init.method || "GET", body: init.body?.toString?.() ?? init.body });
     if (url === "https://pardakht.cafebazaar.ir/devapi/v2/auth/token/") {
       return new Response(JSON.stringify(
         tokenStatus === 200
