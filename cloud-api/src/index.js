@@ -655,7 +655,7 @@ export default { async fetch(req,env){
      const x=await body(req,16_384);
      const subscriptionId=typeof x.subscriptionId==="string"?x.subscriptionId:"";
      const purchaseToken=typeof x.purchaseToken==="string"?x.purchaseToken:"";
-     if(purchaseToken.length<20||purchaseToken.length>4096||/[\\s\\x00-\\x1f\\x7f]/.test(purchaseToken)) {
+     if(purchaseToken.length<20||purchaseToken.length>4096||/[\s\x00-\x1f\x7f]/.test(purchaseToken)) {
        return out({error:"PURCHASE_TOKEN_INVALID"},400);
      }
      const products=configuredBazaarProducts(env);
