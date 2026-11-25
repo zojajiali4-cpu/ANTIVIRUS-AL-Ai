@@ -115,7 +115,7 @@ object ScanEngine {
                 }
             }
 
-            val hash = digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+            val hash = Sha256.hex(digest.digest())
             val evidence = mutableListOf<ScanEvidence>()
             ScanStageRunner.failureEvidence(contentBundleStage)?.let(evidence::add)
             ScanStageRunner.failureEvidence(nativeInitStage)?.let(evidence::add)
