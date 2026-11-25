@@ -393,12 +393,12 @@ export default { async fetch(req,env){
    }catch(error){
      const code=error?.message||"";
      if(code==="BAZAAR_REFRESH_TOKEN_NOT_CONFIGURED"){
-       return out({ok:true,checkoutReady:false,monthlySku:env.BAZAAR_SUBSCRIPTION_MONTHLY_ID,
-         annualSku:env.BAZAAR_SUBSCRIPTION_ANNUAL_ID,reason:"AUTHORIZATION_REQUIRED"});
+       return out({ok:true,checkoutReady:false,monthlySku:bazaarMonthlySubscriptionId(env),
+         annualSku:bazaarAnnualSubscriptionId(env),reason:"AUTHORIZATION_REQUIRED"});
      }
      if(code==="BAZAAR_CREDENTIALS_REJECTED"){
-       return out({ok:true,checkoutReady:false,monthlySku:env.BAZAAR_SUBSCRIPTION_MONTHLY_ID,
-         annualSku:env.BAZAAR_SUBSCRIPTION_ANNUAL_ID,reason:"CREDENTIALS_REJECTED"});
+       return out({ok:true,checkoutReady:false,monthlySku:bazaarMonthlySubscriptionId(env),
+         annualSku:bazaarAnnualSubscriptionId(env),reason:"CREDENTIALS_REJECTED"});
      }
      return out({ok:false,checkoutReady:false,error:"BAZAAR_BILLING_UNAVAILABLE"},503);
    }
