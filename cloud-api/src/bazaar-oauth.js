@@ -30,12 +30,12 @@ function base64Url(bytes) {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
-function decodeBase64Url(value, expectedBytes) {
+function decodeBase64Url(value, expectedBytes = null) {
   if (typeof value !== "string" || !/^[A-Za-z0-9_-]+$/.test(value)) throw Error("OAUTH_ENCRYPTION_KEY_INVALID");
   const base64 = value.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - value.length % 4) % 4);
   let binary;
   try { binary = atob(base64); } catch { throw Error("OAUTH_ENCRYPTION_KEY_INVALID"); }
-  if (binary.length !== expectedBytes) throw Error("OAUTH_ENCRYPTION_KEY_INVALID");
+  if (expectedBytes !== null && binary.length !== expectedBytes) throw Error("OAUTH_ENCRYPTION_KEY_INVALID");
   return Uint8Array.from(binary, c => c.charCodeAt(0));
 }
 
@@ -62,7 +62,7 @@ export async function readBazaarRefreshToken(env) {
     if (row?.iv && row?.ciphertext) {
       const key = await encryptionKey(env);
       const iv = decodeBase64Url(row.iv, 12);
-      const encrypted = decodeBase64Url(row.ciphertext, Math.ceil(row.ciphertext.length * 3 / 4));
+      const encrypted = decodeBase64Url(row.ciphertext);
       const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, encrypted);
       const token = new TextDecoder("utf-8", { fatal: true }).decode(plaintext);
       if (!token || token.length > 8192) throw Error("BAZAAR_TOKEN_STORAGE_INVALID");
