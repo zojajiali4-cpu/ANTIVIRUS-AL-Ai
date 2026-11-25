@@ -227,7 +227,11 @@ async function callback(req, env) {
 }
 
 export async function handleBazaarOAuth(req, env, path) {
-  if (path === "/v1/billing/bazaar/oauth/start") return start(req, env);
-  if (path === "/v1/billing/bazaar/oauth/callback") return callback(req, env);
-  return html("یافت نشد.", 404);
+  try {
+    if (path === "/v1/billing/bazaar/oauth/start") return await start(req, env);
+    if (path === "/v1/billing/bazaar/oauth/callback") return await callback(req, env);
+    return html("یافت نشد.", 404);
+  } catch {
+    return html("درخواست اتصال کامل نشد. تنظیمات سرور را بررسی کنید و دوباره تلاش کنید.", 503);
+  }
 }
