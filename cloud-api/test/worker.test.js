@@ -5,6 +5,7 @@ import { createHash, createHmac, createSign, generateKeyPairSync, webcrypto } fr
 if (!globalThis.crypto) Object.defineProperty(globalThis, "crypto", { value: webcrypto });
 
 const { default: worker } = await import("../src/index.js");
+const { readBazaarRefreshToken } = await import("../src/bazaar-oauth.js");
 const encoder = new TextEncoder();
 const RATE_SALT = "a9".repeat(32);
 const PLUS_ENTITLEMENT_HMAC_SECRET = "unit-test-plus-entitlement-secret-32-bytes-min";
@@ -18,6 +19,8 @@ function makeD1({ fail = false } = {}) {
   const feeds = new Map();
   const statements = [];
   const bazaarVerifications = new Map();
+  const oauthStates = new Map();
+  let oauthTokenRow = null;
   return {
     statements,
     prepare(sql) {
@@ -36,6 +39,15 @@ function makeD1({ fail = false } = {}) {
         if (sql.startsWith("SELECT subscription_id,expires_at FROM bazaar_subscription_verifications")) {
           return bazaarVerifications.get(params[0]) || null;
         }
+        if (sql.startsWith("SELECT iv,ciphertext FROM bazaar_oauth_tokens")) return oauthTokenRow;
+        if (sql.startsWith("DELETE FROM bazaar_oauth_states")) {
+          const row = oauthStates.get(params[0]);
+          if (row && row.expires_at > params[1]) {
+            oauthStates.delete(params[0]);
+            return { state_hash: params[0] };
+          }
+          return null;
+        }
         return null;
       };
       const run = async (params = []) => {
@@ -49,6 +61,10 @@ function makeD1({ fail = false } = {}) {
             purchase_token_sha256: params[0], subscription_id: params[1],
             expires_at: params[2], verified_at: params[3]
           });
+        } else if (sql.startsWith("INSERT INTO bazaar_oauth_states")) {
+          oauthStates.set(params[0], { state_hash: params[0], expires_at: params[1], created_at: params[2] });
+        } else if (sql.startsWith("INSERT INTO bazaar_oauth_tokens")) {
+          oauthTokenRow = { iv: params[0], ciphertext: params[1], updated_at: params[2] };
         }
         return { success: true };
       };
@@ -159,6 +175,115 @@ function signedFeed({ version = 7, issued = Math.floor(Date.now() / 1000) - 60, 
 function feedEnvironment(db = makeD1()) {
   return { DB: db, RATE_SALT, ADMIN_API_KEY: "test-admin-token", FEED_KEY_ID: KEY_ID, FEED_PUBLIC_KEY_B64 };
 }
+
+test("Cafe Bazaar OAuth start requires the owner setup key and uses the exact registered redirect URI", async () => {
+  const db = makeD1();
+  const env = {
+    ...bazaarEnvironment(db),
+    BAZAAR_OAUTH_REDIRECT_URI: "https://antivirus-al-ai-api.zojajiali4.workers.dev/v1/billing/bazaar/oauth/callback",
+    BAZAAR_OAUTH_SETUP_KEY: "owner-setup-key-for-cafe-bazaar-oauth-32",
+    BAZAAR_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString("base64url")
+  };
+  const page = await worker.fetch(new Request(
+    "https://antivirus-al-ai-api.zojajiali4.workers.dev/v1/billing/bazaar/oauth/start",
+    { headers: { "CF-Connecting-IP": CLIENT_IP } }
+  ), env);
+  assert.equal(page.status, 200);
+  assert.match(await page.text(), /type="password"/);
+
+  const denied = await worker.fetch(new Request(
+    "https://antivirus-al-ai-api.zojajiali4.workers.dev/v1/billing/bazaar/oauth/start",
+    { method: "POST", headers: {
+      "CF-Connecting-IP": CLIENT_IP, Origin: "https://antivirus-al-ai-api.zojajiali4.workers.dev",
+      "content-type": "application/x-www-form-urlencoded"
+    }, body: "setup_key=wrong" }
+  ), env);
+  assert.equal(denied.status, 403);
+
+  const started = await worker.fetch(new Request(
+    "https://antivirus-al-ai-api.zojajiali4.workers.dev/v1/billing/bazaar/oauth/start",
+    { method: "POST", headers: {
+      "CF-Connecting-IP": CLIENT_IP, Origin: "https://antivirus-al-ai-api.zojajiali4.workers.dev",
+      "content-type": "application/x-www-form-urlencoded"
+    }, body: "setup_key=" + encodeURIComponent(env.BAZAAR_OAUTH_SETUP_KEY) }
+  ), env);
+  assert.equal(started.status, 303);
+  const location = new URL(started.headers.get("location"));
+  assert.equal(location.origin, "https://pardakht.cafebazaar.ir");
+  assert.equal(location.pathname, "/devapi/v2/auth/authorize/");
+  assert.equal(location.searchParams.get("response_type"), "code");
+  assert.equal(location.searchParams.get("access_type"), "offline");
+  assert.equal(location.searchParams.get("redirect_uri"), env.BAZAAR_OAUTH_REDIRECT_URI);
+  assert.equal(location.searchParams.get("client_id"), env.BAZAAR_CLIENT_ID);
+  assert.equal(location.searchParams.get("state")?.length, 43);
+  assert.match(started.headers.get("set-cookie"), /HttpOnly/);
+  assert.match(started.headers.get("set-cookie"), /SameSite=Lax/);
+});
+
+test("Cafe Bazaar OAuth callback exchanges a one-time code and encrypts the refresh token at rest", async () => {
+  const db = makeD1();
+  const env = {
+    ...bazaarEnvironment(db),
+    BAZAAR_OAUTH_REDIRECT_URI: "https://antivirus-al-ai-api.zojajiali4.workers.dev/v1/billing/bazaar/oauth/callback",
+    BAZAAR_OAUTH_SETUP_KEY: "owner-setup-key-for-cafe-bazaar-oauth-32",
+    BAZAAR_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 9).toString("base64url")
+  };
+  const start = await worker.fetch(new Request(
+    "https://antivirus-al-ai-api.zojajiali4.workers.dev/v1/billing/bazaar/oauth/start",
+    { method: "POST", headers: {
+      "CF-Connecting-IP": CLIENT_IP, Origin: "https://antivirus-al-ai-api.zojajiali4.workers.dev",
+      "content-type": "application/x-www-form-urlencoded"
+    }, body: "setup_key=" + encodeURIComponent(env.BAZAAR_OAUTH_SETUP_KEY) }
+  ), env);
+  assert.equal(start.status, 303);
+  const authUrl = new URL(start.headers.get("location"));
+  const state = authUrl.searchParams.get("state");
+  const cookie = start.headers.get("set-cookie").split(";")[0];
+  const originalFetch = globalThis.fetch;
+  let exchangeBody = "";
+  globalThis.fetch = async (input, init = {}) => {
+    assert.equal(String(input), "https://pardakht.cafebazaar.ir/devapi/v2/auth/token/");
+    exchangeBody = String(init.body);
+    return new Response(JSON.stringify({
+      access_token: "short-lived-access-token",
+      refresh_token: "refresh-token-that-must-never-be-returned-to-browser",
+      token_type: "Bearer", expires_in: 3600
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const callback = await worker.fetch(new Request(
+      "https://antivirus-al-ai-api.zojajiali4.workers.dev/v1/billing/bazaar/oauth/callback?code=one-time-auth-code-123456&state=" + encodeURIComponent(state),
+      { headers: { "CF-Connecting-IP": CLIENT_IP, cookie } }
+    ), env);
+    assert.equal(callback.status, 200);
+    const page = await callback.text();
+    assert.match(page, /با موفقیت انجام شد/);
+    assert.doesNotMatch(page, /refresh-token-that-must-never-be-returned/);
+    assert.match(exchangeBody, /grant_type=authorization_code/);
+    assert.match(exchangeBody, /redirect_uri=https%3A%2F%2Fantivirus-al-ai-api/);
+    const stored = await readBazaarRefreshToken(env);
+    assert.equal(stored, "refresh-token-that-must-never-be-returned-to-browser");
+    assert.notEqual(db.statements.find(x => x.sql.startsWith("INSERT INTO bazaar_oauth_tokens"))?.params[1], stored);
+    const replay = await worker.fetch(new Request(
+      "https://antivirus-al-ai-api.zojajiali4.workers.dev/v1/billing/bazaar/oauth/callback?code=one-time-auth-code-123456&state=" + encodeURIComponent(state),
+      { headers: { "CF-Connecting-IP": CLIENT_IP, cookie } }
+    ), env);
+    assert.equal(replay.status, 400);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("Cafe Bazaar OAuth callback rejects a state mismatch before contacting Bazaar", async () => {
+  const env = {
+    ...bazaarEnvironment(),
+    BAZAAR_OAUTH_REDIRECT_URI: "https://antivirus-al-ai-api.zojajiali4.workers.dev/v1/billing/bazaar/oauth/callback",
+    BAZAAR_TOKEN_ENCRYPTION_KEY: Buffer.alloc(32, 11).toString("base64url")
+  };
+  const response = await worker.fetch(new Request(
+    "https://antivirus-al-ai-api.zojajiali4.workers.dev/v1/billing/bazaar/oauth/callback?code=one-time-auth-code-123456&state=attacker-state-value",
+    { headers: { "CF-Connecting-IP": CLIENT_IP, cookie: "__Host-alai-bazaar-oauth=other-state-value" } }
+  ), env);
+  assert.equal(response.status, 400);
+});
 
 test("Cafe Bazaar billing readiness stays closed when server configuration is missing", async () => {
   const env = bazaarEnvironment();
