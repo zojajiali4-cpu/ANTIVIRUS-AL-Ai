@@ -384,6 +384,10 @@ export default { async fetch(req,env){
        annualSku:env.BAZAAR_SUBSCRIPTION_ANNUAL_ID});
    }catch(error){
      const code=error?.message||"";
+     if(code==="BAZAAR_REFRESH_TOKEN_NOT_CONFIGURED"){
+       return out({ok:true,checkoutReady:false,monthlySku:env.BAZAAR_SUBSCRIPTION_MONTHLY_ID,
+         annualSku:env.BAZAAR_SUBSCRIPTION_ANNUAL_ID,reason:"AUTHORIZATION_REQUIRED"});
+     }
      if(code==="BAZAAR_CREDENTIALS_REJECTED"){
        return out({ok:true,checkoutReady:false,monthlySku:env.BAZAAR_SUBSCRIPTION_MONTHLY_ID,
          annualSku:env.BAZAAR_SUBSCRIPTION_ANNUAL_ID,reason:"CREDENTIALS_REJECTED"});
@@ -423,7 +427,7 @@ export default { async fetch(req,env){
      if(code==="BODY_TOO_LARGE"||code==="INVALID_UTF8"||code==="INVALID_JSON") return out({error:code},400);
      if(code==="BAZAAR_PURCHASE_TOKEN_INVALID") return out({error:"PURCHASE_TOKEN_INVALID"},400);
      if(code==="BAZAAR_PURCHASE_NOT_ENTITLED") return out({error:"PURCHASE_NOT_ENTITLED",entitled:false},403);
-     if(code==="BAZAAR_BILLING_NOT_CONFIGURED"||code==="BAZAAR_CREDENTIALS_REJECTED") {
+     if(code==="BAZAAR_BILLING_NOT_CONFIGURED"||code==="BAZAAR_CREDENTIALS_REJECTED"||code==="BAZAAR_REFRESH_TOKEN_NOT_CONFIGURED") {
        return out({error:"BAZAAR_BILLING_NOT_CONFIGURED"},503);
      }
      if(code==="BAZAAR_RESPONSE_TOO_LARGE"||code==="BAZAAR_INVALID_JSON"||
