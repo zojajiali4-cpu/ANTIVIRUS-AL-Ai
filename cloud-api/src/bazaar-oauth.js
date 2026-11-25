@@ -199,7 +199,7 @@ async function callback(req, env) {
     code,
     client_id: env.BAZAAR_CLIENT_ID,
     client_secret: env.BAZAAR_CLIENT_SECRET,
-    redirect_uri: env.BAZAAR_OAUTH_REDIRECT_URI
+    redirect_uri: redirectUri
   });
   let tokenResponse;
   try {
