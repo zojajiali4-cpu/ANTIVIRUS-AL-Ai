@@ -22,7 +22,7 @@
    - `PLUS_ENTITLEMENT_HMAC_SECRET`
    - `RATE_SALT`
    A `BAZAAR_REFRESH_TOKEN` secret is no longer required. The OAuth callback stores the refresh token encrypted with AES-GCM in D1 and refresh-token rotation is persisted encrypted.
-5. Apply migrations `0001_bazaar_billing.sql` and `0002_bazaar_oauth.sql` in order, then deploy the Worker with `BAZAAR_OAUTH_REDIRECT_URI` set in `cloud-api/wrangler.toml`.
+5. Apply migrations `0001_bazaar_billing.sql`, `0002_bazaar_oauth.sql`, and `0003_legacy_billing_verifications.sql` in order, then deploy the Worker with `BAZAAR_OAUTH_REDIRECT_URI` set in `cloud-api/wrangler.toml`.
 6. Open `https://antivirus-al-ai-api.zojajiali4.workers.dev/v1/billing/bazaar/oauth/start`, enter the `BAZAAR_OAUTH_SETUP_KEY` in the HTTPS form, and approve the authorization in Cafe Bazaar. The state is one-time, browser-cookie-bound and expires after 10 minutes. The authorization code is exchanged server-side; the refresh token is never displayed or placed in a URL.
 7. Verify `GET /v1/billing/bazaar/status` returns `checkoutReady: true` and both expected SKUs, then test a valid new purchase, restore after reinstall, canceled-but-still-valid subscription, expired/refunded token, wrong product, invalid token, Bazaar outage, missing credentials and ineligible trial account.
 
