@@ -4,3 +4,47 @@ CREATE TABLE IF NOT EXISTS signed_feeds (version INTEGER PRIMARY KEY, issued_at 
 CREATE TABLE IF NOT EXISTS api_rate_limits (ip_hash TEXT NOT NULL, bucket INTEGER NOT NULL, hits INTEGER NOT NULL, PRIMARY KEY(ip_hash,bucket));
 CREATE INDEX IF NOT EXISTS idx_hash_classification ON hash_reputation(classification);
 CREATE INDEX IF NOT EXISTS idx_url_classification ON url_reputation(classification);
+CREATE TABLE IF NOT EXISTS bazaar_subscription_verifications (
+  purchase_token_sha256 TEXT PRIMARY KEY CHECK(length(purchase_token_sha256)=64),
+  subscription_id TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  verified_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_bazaar_subscription_expiry ON bazaar_subscription_verifications(expires_at);
+
+CREATE TABLE IF NOT EXISTS bazaar_oauth_states (
+  state_hash TEXT PRIMARY KEY CHECK(length(state_hash)=64),
+  expires_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_bazaar_oauth_states_expiry ON bazaar_oauth_states(expires_at);
+CREATE TABLE IF NOT EXISTS bazaar_oauth_tokens (
+  id INTEGER PRIMARY KEY CHECK(id=1),
+  iv TEXT NOT NULL,
+  ciphertext TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS play_billing_verifications (
+  purchase_token_sha256 TEXT PRIMARY KEY CHECK(length(purchase_token_sha256)=64),
+  product_id TEXT NOT NULL,
+  base_plan_id TEXT NOT NULL,
+  subscription_state TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  is_trial INTEGER NOT NULL CHECK(is_trial IN (0,1)),
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_play_billing_expiry ON play_billing_verifications(expires_at);
+
+CREATE TABLE IF NOT EXISTS bazaar_billing_verifications (
+  purchase_token_sha256 TEXT PRIMARY KEY CHECK(length(purchase_token_sha256)=64),
+  product_id TEXT NOT NULL,
+  base_plan_id TEXT NOT NULL CHECK(base_plan_id IN ('monthly','annual')),
+  subscription_state TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  auto_renewing INTEGER NOT NULL CHECK(auto_renewing IN (0,1)),
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_bazaar_billing_expiry ON bazaar_billing_verifications(expires_at);

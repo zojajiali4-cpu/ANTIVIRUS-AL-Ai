@@ -35,6 +35,9 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.13"
+          # Allow cache writes only for trusted PRs from this repository.
+          # Fork PRs remain read-only to prevent cache poisoning.
+          cache-read-only: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -59,17 +62,17 @@ jobs:
           grep -Fq "Signer #1 certificate SHA-256 digest:" <<< "$SIGNATURE_REPORT"
           BADGING="$("$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK")"
           printf '%s\\n' "$BADGING"
-          grep -Fq "package: name='com.antivirusalai' versionCode='3' versionName='0.3.0'" <<< "$BADGING"
+          grep -Fq "package: name='com.antivirusalai' versionCode='4' versionName='0.4.0'" <<< "$BADGING"
           # Fail the build if Android packaging silently drops the launcher icon.
           grep -Eq "^application: .*icon='res/" <<< "$BADGING"
           mkdir -p artifacts
-          cp "$APK" artifacts/ANTIVIRUS-AL-AI-v0.3.0-debug.apk
+          cp "$APK" artifacts/ANTIVIRUS-AL-AI-v0.4.0-debug.apk
           printf '%s\\n' "$SIGNATURE_REPORT" > artifacts/apk-signature.txt
           CERT_SHA256="$(awk -F': ' '/Signer #1 certificate SHA-256 digest:/ {print $2; exit}' <<< "$SIGNATURE_REPORT")"
           {
             echo "app=ANTIVIRUS AL AI"
-            echo "version=0.3.0"
-            echo "version_code=3"
+            echo "version=0.4.0"
+            echo "version_code=4"
             echo "commit=${GITHUB_SHA}"
             echo "workflow_run=${GITHUB_RUN_ID}"
             echo "sha256=$(sha256sum "$APK" | cut -d ' ' -f 1)"
@@ -82,7 +85,7 @@ jobs:
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: antivirus-al-ai-v0.3.0-debug
+          name: antivirus-al-ai-v0.4.0-debug
           path: artifacts/*
           if-no-files-found: error
           retention-days: 14
@@ -106,6 +109,9 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.13"
+          # Allow cache writes only for trusted PRs from this repository.
+          # Fork PRs remain read-only to prevent cache poisoning.
+          cache-read-only: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -164,6 +170,9 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.13"
+          # Allow cache writes only for trusted PRs from this repository.
+          # Fork PRs remain read-only to prevent cache poisoning.
+          cache-read-only: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -172,6 +181,36 @@ jobs:
 
       - name: Install Android 36 SDK packages
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools" "cmake;3.22.1" "ndk;30.0.16248370"
+
+      - name: Enable KVM access for Android emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -c /dev/kvm ]]; then
+            echo "::error::This runner does not expose /dev/kvm; x86_64 emulator tests require a hardware-accelerated runner."
+            exit 1
+          fi
+
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+          for attempt in $(seq 1 10); do
+            if [[ -r /dev/kvm && -w /dev/kvm ]]; then
+              break
+            fi
+            sleep 1
+          done
+
+          if [[ ! -r /dev/kvm || ! -w /dev/kvm ]]; then
+            echo "::error::KVM device exists but is not readable and writable by the runner after applying the udev rule."
+            id
+            ls -l /dev/kvm || true
+            exit 1
+          fi
+
+          echo "KVM is available to the emulator runner:"
+          ls -l /dev/kvm
 
       - name: Launch app and run instrumentation tests
         uses: reactivecircus/android-emulator-runner@v2
@@ -204,6 +243,9 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.13"
+          # Allow cache writes only for trusted PRs from this repository.
+          # Fork PRs remain read-only to prevent cache poisoning.
+          cache-read-only: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -225,11 +267,11 @@ jobs:
           unzip -t "$AAB" >/dev/null
           unzip -l "$AAB" | grep -q 'base/manifest/AndroidManifest.xml'
           mkdir -p artifacts
-          cp "$AAB" artifacts/ANTIVIRUS-AL-AI-v0.3.0-unsigned-preflight.aab
+          cp "$AAB" artifacts/ANTIVIRUS-AL-AI-v0.4.0-unsigned-preflight.aab
           {
             echo "app=ANTIVIRUS AL AI"
-            echo "version=0.3.0"
-            echo "version_code=3"
+            echo "version=0.4.0"
+            echo "version_code=4"
             echo "commit=${GITHUB_SHA}"
             echo "signing=UNSIGNED - NOT FOR PLAY UPLOAD"
             echo "sha256=$(sha256sum "$AAB" | cut -d ' ' -f 1)"
@@ -238,7 +280,7 @@ jobs:
       - name: Upload unsigned AAB preflight artifact
         uses: actions/upload-artifact@v4
         with:
-          name: antivirus-al-ai-v0.3.0-unsigned-aab-preflight
+          name: antivirus-al-ai-v0.4.0-unsigned-aab-preflight
           path: artifacts/*
           if-no-files-found: error
           retention-days: 14

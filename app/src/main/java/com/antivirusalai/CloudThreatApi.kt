@@ -115,8 +115,9 @@ object CloudThreatApi {
      * Sends only a user-confirmed SHA-256 digest to the cloud reputation endpoint.
      * A no-match is UNKNOWN, never a clean verdict.
      */
-    fun checkSha256(value: String): CloudHashReputationResult {
+    fun checkSha256(value: String, entitlementToken: String): CloudHashReputationResult {
         val hash = validateSha256(value)
+        val accessToken = BazaarBillingApi.validateCloudAccessToken(entitlementToken)
         val base = BuildConfig.ALAI_API_BASE_URL.trimEnd('/')
         require(base.startsWith("https://")) { "Cloud API must use HTTPS." }
 
@@ -129,6 +130,7 @@ object CloudThreatApi {
             doOutput = true
             setRequestProperty("Accept", "application/json")
             setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            setRequestProperty("Authorization", "Bearer " + accessToken)
             setFixedLengthStreamingMode(payload.size)
         }
 
@@ -137,6 +139,9 @@ object CloudThreatApi {
             val status = connection.responseCode
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
             val body = stream?.let(::readBounded).orEmpty()
+            if (status == 401 || status == 403) {
+                throw IllegalStateException("PLUS cloud access expired or is not verified. Restore purchases to refresh access.")
+            }
             if (status == 503) {
                 throw IllegalStateException("Cloud reputation database is currently unavailable.")
             }

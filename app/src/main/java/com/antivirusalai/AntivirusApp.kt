@@ -1,7 +1,9 @@
 package com.antivirusalai
 
 import android.Manifest
+import androidx.activity.ComponentActivity
 import android.content.Intent
+import android.content.ContextWrapper
 import android.net.Uri
 import android.widget.Toast
 import android.os.Build
@@ -143,11 +145,35 @@ private enum class AppInventoryConsentAction {
 @Composable
 fun AntivirusApp(inPictureInPicture: Boolean = false) {
     val context = LocalContext.current
+    val activity = remember(context) {
+        var current: android.content.Context? = context
+        var host: ComponentActivity? = null
+        while (current != null && host == null) {
+            host = current as? ComponentActivity
+            current = if (host == null) (current as? ContextWrapper)?.baseContext else null
+        }
+        host
+    }
     val scope = rememberCoroutineScope()
+    var bazaarBillingState by remember { mutableStateOf(BazaarBillingState()) }
+    val bazaarBillingManager = remember(activity) {
+        activity?.let { host ->
+            BazaarBillingManager(host, context.applicationContext) { next ->
+                bazaarBillingState = next
+            }
+        }
+    }
+    DisposableEffect(bazaarBillingManager) {
+        bazaarBillingManager?.connect()
+        onDispose { bazaarBillingManager?.close() }
+    }
     val workManager = remember(context) { WorkManager.getInstance(context.applicationContext) }
     val restoredScan = remember(context) { ScanReportStore.load(context.applicationContext) }
     var language by rememberSaveable { mutableStateOf("fa") }
     var activeTab by rememberSaveable { mutableStateOf(MainTab.HOME.key) }
+    LaunchedEffect(activeTab, bazaarBillingManager) {
+        if (activeTab == MainTab.STORE.key) bazaarBillingManager?.refresh()
+    }
     var scanning by remember { mutableStateOf(false) }
     var quarantining by remember { mutableStateOf(false) }
     var showQuarantineConfirmation by remember { mutableStateOf(false) }
@@ -164,7 +190,6 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
     var deviceScanDeep by remember { mutableStateOf(restoredScan?.deep ?: false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
-    var selectedPlan by remember { mutableStateOf<String?>(null) }
     var featureInfo by remember { mutableStateOf<String?>(null) }
     var showPrivacy by remember { mutableStateOf(false) }
     var showStoragePermissionRationale by remember { mutableStateOf(false) }
@@ -594,6 +619,9 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
                                 deviceScanDeep = deviceScanDeep,
                                 errorMessage = errorMessage,
                                 notice = notice,
+                                premiumAccess = bazaarBillingState.entitled,
+                                cloudAccessToken = bazaarBillingState.cloudAccessToken,
+                                onOpenStore = { activeTab = MainTab.STORE.key },
                                 quarantining = quarantining,
                                 onFileScan = launchFileScan,
                                 onApkScan = launchApkScan,
@@ -632,7 +660,9 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
 
                             MainTab.STORE.key -> StoreScreen(
                                 fa = fa,
-                                onSelectPlan = { selectedPlan = it }
+                                billingState = bazaarBillingState,
+                                onPurchase = { sku -> bazaarBillingManager?.purchase(sku) },
+                                onRestore = { bazaarBillingManager?.restorePurchases() }
                             )
 
                             else -> SettingsScreen(
@@ -678,36 +708,6 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
         }
     }
 
-    selectedPlan?.let { plan ->
-        AlertDialog(
-            onDismissRequest = { selectedPlan = null },
-            containerColor = SurfaceRaised,
-            title = { Text(tr(fa, "فروشگاه ANTIVIRUS AL AI", "ANTIVIRUS AL AI Store"), color = TextPrimary) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                    Text(
-                        tr(fa, "طرح انتخاب‌شده: $plan", "Selected plan: $plan"),
-                        color = BrandTeal,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        tr(
-                            fa,
-                            "پرداخت Google Play و مدیریت اشتراک هنوز متصل نشده‌اند. هیچ مبلغی دریافت یا اشتراکی فعال نمی‌شود. این بخش فعلاً پیش‌نمایش طرح‌هاست.",
-                            "Google Play Billing and subscription management are not connected yet. No payment or subscription activation will occur. This is currently a plan preview."
-                        ),
-                        color = TextSecondary
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = { selectedPlan = null },
-                    colors = ButtonDefaults.buttonColors(containerColor = BrandTeal)
-                ) { Text(tr(fa, "متوجه شدم", "Got it"), color = AppBackground) }
-            }
-        )
-    }
 
     featureInfo?.let { feature ->
         AlertDialog(
@@ -2190,6 +2190,9 @@ private fun ScanCenterScreen(
     deviceScanDeep: Boolean,
     errorMessage: String?,
     notice: String?,
+    premiumAccess: Boolean,
+    cloudAccessToken: String?,
+    onOpenStore: () -> Unit,
     quarantining: Boolean,
     onFileScan: () -> Unit,
     onApkScan: () -> Unit,
@@ -2320,7 +2323,12 @@ private fun ScanCenterScreen(
         }
 
         result?.let {
-            CloudHashReputationCard(result = it, fa = fa)
+            CloudHashReputationCard(
+                result = it, fa = fa,
+                premiumAccess = premiumAccess,
+                cloudAccessToken = cloudAccessToken,
+                onOpenStore = onOpenStore
+            )
         }
 
         if (result == null && batchReport == null && errorMessage == null) {
@@ -3211,27 +3219,56 @@ private fun QuarantineVaultScreen(
 @Composable
 private fun StoreScreen(
     fa: Boolean,
-    onSelectPlan: (String) -> Unit
+    billingState: BazaarBillingState,
+    onPurchase: (String) -> Unit,
+    onRestore: () -> Unit
 ) {
+    val monthly = billingState.offers.firstOrNull { it.sku == BuildConfig.ALAI_BAZAAR_MONTHLY_SKU }
+    val annual = billingState.offers.firstOrNull { it.sku == BuildConfig.ALAI_BAZAAR_ANNUAL_SKU }
+    val expiryText = billingState.expiresAtEpochMillis?.let {
+        java.text.DateFormat.getDateInstance().format(java.util.Date(it))
+    }
     Column(verticalArrangement = Arrangement.spacedBy(15.dp)) {
         Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-            EyebrowLabel(tr(fa, "طرح‌های عضویت", "MEMBERSHIP"))
+            EyebrowLabel(tr(fa, "اشتراک کافه‌بازار", "CAFE BAZAAR BILLING"))
             Text(tr(fa, "فروشگاه", "Store"), color = TextPrimary, fontSize = 25.sp, fontWeight = FontWeight.Bold)
             Text(
-                tr(fa, "امکانات تکمیلی برای نیازهای مختلف", "Plans for different security needs"),
+                tr(fa, "پرداخت و قیمت‌گذاری مستقیماً از کافه‌بازار دریافت می‌شود.", "Checkout and localized pricing are provided by Cafe Bazaar."),
                 color = TextSecondary,
                 fontSize = 12.sp
             )
         }
 
         InfoBanner(
-            title = tr(fa, "پرداخت هنوز فعال نیست", "Checkout is not active"),
-            body = tr(
-                fa,
-                "این نسخه کاتالوگ طرح‌ها را نشان می‌دهد. پرداخت Google Play، قیمت‌گذاری منطقه‌ای و مدیریت اشتراک هنوز متصل نشده‌اند؛ هیچ مبلغی دریافت نمی‌شود.",
-                "This version displays the plan catalogue only. Google Play Billing, regional pricing and subscription management are not connected. No payment will be taken."
-            ),
-            warning = true
+            title = when {
+                billingState.entitled -> tr(fa, "اشتراک PLUS تأیید شده", "PLUS subscription verified")
+                billingState.checkoutReady -> tr(fa, "خرید کافه‌بازار آماده است", "Cafe Bazaar checkout is ready")
+                !billingState.connected -> tr(fa, "اتصال بازار برقرار نیست", "Cafe Bazaar is not connected")
+                else -> tr(fa, "خرید فعلاً غیرفعال است", "Checkout is currently unavailable")
+            },
+            body = when {
+                billingState.entitled -> tr(
+                    fa,
+                    "اشتراک شما تا " + (expiryText ?: "زمان اعلام‌شده در بازار") + " معتبر است. دسترسی ویژه فقط پس از تأیید سرور فعال شده است.",
+                    "Your verified subscription is valid until " + (expiryText ?: "the expiry confirmed by Bazaar") + ". PLUS access was enabled only after server verification."
+                )
+                billingState.checkoutReady && billingState.trialAvailable -> tr(
+                    fa,
+                    "کافه‌بازار برای این حساب دوره آزمایشی " + billingState.trialPeriodDays + " روزه را واجدشرایط اعلام کرده است. قیمت نهایی و شرایط پرداخت در صفحه امن بازار نمایش داده می‌شود.",
+                    "Cafe Bazaar reports that this account is eligible for a " + billingState.trialPeriodDays + "-day trial. Final pricing and payment terms are shown in Bazaar's secure checkout."
+                )
+                billingState.checkoutReady -> tr(
+                    fa,
+                    "قیمت‌ها از بازار دریافت شده‌اند. دوره آزمایشی برای حساب فعلی تأیید نشده است.",
+                    "Prices were retrieved from Bazaar. A free trial has not been confirmed for this account."
+                )
+                else -> tr(
+                    fa,
+                    "اتصال بازار، شناسه کالاها و اعتبارسنجی امن سمت سرور باید تنظیم باشند. اسکن و گزارش محلی رایگان باقی می‌مانند.",
+                    "Bazaar connection, product IDs and server-side verification must be configured. Local scanning and reports remain free."
+                )
+            },
+            warning = !billingState.entitled && !billingState.checkoutReady
         )
 
         PlanCard(
@@ -3239,74 +3276,152 @@ private fun StoreScreen(
             name = "FREE",
             subtitle = tr(fa, "امنیت پایه، بدون هزینه", "Essential protection, no cost"),
             price = tr(fa, "رایگان", "Free"),
-            badge = tr(fa, "طرح فعلی", "CURRENT"),
+            badge = tr(fa, "همیشه رایگان", "ALWAYS FREE"),
             highlighted = true,
             features = listOf(
-                tr(fa, "اسکن سریع انتخابی و تحلیل پایه APK", "Selected-file scan and basic APK analysis"),
-                tr(fa, "گزارش شفاف و نمایش شواهد", "Transparent reports and evidence"),
-                tr(fa, "ذخیره نسخه رمزنگاری‌شده فایل", "Encrypted private copy"),
-                tr(fa, "پردازش محلی بدون آپلود محتوا", "Local processing without content uploads")
+                tr(fa, "اسکن انتخابی فایل و تحلیل پایه APK", "Selected-file scanning and basic APK analysis"),
+                tr(fa, "گزارش شفاف همراه شواهد", "Transparent evidence-based reports"),
+                tr(fa, "قرنطینه رمزنگاری‌شده در حافظه خصوصی", "Encrypted quarantine in private app storage"),
+                tr(fa, "پردازش محلی بدون آپلود محتوای فایل", "Local processing without uploading file contents")
             ),
-            onSelect = { onSelectPlan("FREE") }
+            onSelect = {}
         )
-        PlanCard(
+
+        BazaarPlanCard(
             fa = fa,
-            name = "PLUS",
-            subtitle = tr(fa, "اشتراک ماهانه", "Monthly membership"),
-            price = tr(fa, "قیمت هنگام عرضه", "Price at launch"),
-            badge = tr(fa, "به‌زودی", "COMING"),
-            highlighted = false,
-            features = listOf(
-                tr(fa, "به‌روزرسانی بانک تهدید پس از انتشار", "Threat-feed updates after launch"),
-                tr(fa, "اعتبارسنجی اختیاری هش فایل", "Optional hash reputation"),
-                tr(fa, "گزارش‌های امنیتی تکمیلی", "Expanded security reports")
-            ),
-            onSelect = { onSelectPlan("PLUS MONTHLY") }
+            name = tr(fa, "PLUS ماهانه", "PLUS MONTHLY"),
+            subtitle = tr(fa, "اشتراک تمدیدشونده ماهانه", "Monthly renewing subscription"),
+            offer = monthly,
+            trialAvailable = billingState.trialAvailable,
+            trialDays = billingState.trialPeriodDays,
+            entitled = billingState.entitled && billingState.currentSku == BuildConfig.ALAI_BAZAAR_MONTHLY_SKU,
+            loading = billingState.loading,
+            checkoutReady = billingState.checkoutReady,
+            onClick = { onPurchase(BuildConfig.ALAI_BAZAAR_MONTHLY_SKU) }
         )
-        PlanCard(
+
+        BazaarPlanCard(
             fa = fa,
-            name = "PLUS ANNUAL",
-            subtitle = tr(fa, "اشتراک سالانه", "Annual membership"),
-            price = tr(fa, "قیمت هنگام عرضه", "Price at launch"),
-            badge = tr(fa, "به‌زودی", "COMING"),
-            highlighted = false,
-            features = listOf(
-                tr(fa, "تمام قابلیت‌های طرح PLUS", "All PLUS features"),
-                tr(fa, "مدیریت و بازیابی اشتراک", "Subscription management and restoration"),
-                tr(fa, "قیمت‌گذاری منطقه‌ای شفاف", "Transparent regional pricing")
-            ),
-            onSelect = { onSelectPlan("PLUS ANNUAL") }
+            name = tr(fa, "PLUS سالانه", "PLUS ANNUAL"),
+            subtitle = tr(fa, "اشتراک تمدیدشونده سالانه", "Annual renewing subscription"),
+            offer = annual,
+            trialAvailable = billingState.trialAvailable,
+            trialDays = billingState.trialPeriodDays,
+            entitled = billingState.entitled && billingState.currentSku == BuildConfig.ALAI_BAZAAR_ANNUAL_SKU,
+            loading = billingState.loading,
+            checkoutReady = billingState.checkoutReady,
+            onClick = { onPurchase(BuildConfig.ALAI_BAZAAR_ANNUAL_SKU) }
         )
-        PlanCard(
-            fa = fa,
-            name = "PRO FAMILY",
-            subtitle = tr(fa, "برای چند دستگاه", "For multiple devices"),
-            price = tr(fa, "قیمت هنگام عرضه", "Price at launch"),
-            badge = tr(fa, "به‌زودی", "COMING"),
-            highlighted = false,
-            features = listOf(
-                tr(fa, "مدیریت چند دستگاه با رضایت کاربران", "Multi-device management with user consent"),
-                tr(fa, "نمای کلی امنیت خانواده", "Family security overview"),
-                tr(fa, "مدیریت اعضا و اشتراک", "Member and plan management")
+
+        billingState.message?.let { message ->
+            InfoBanner(
+                title = tr(fa, "وضعیت پرداخت", "Billing status"),
+                body = message,
+                warning = !billingState.entitled
+            )
+        }
+
+        OutlinedButton(
+            onClick = onRestore,
+            modifier = Modifier.fillMaxWidth(),
+            enabled = billingState.connected && !billingState.loading
+        ) {
+            Text(tr(fa, "بازیابی و بررسی اشتراک‌ها", "Restore and verify subscriptions"))
+        }
+
+        InfoBanner(
+            title = tr(fa, "لغو و تمدید شفاف", "Renewal and cancellation"),
+            body = tr(
+                fa,
+                "اشتراک از طریق حساب کافه‌بازار مدیریت می‌شود. پیش از تأیید پرداخت، قیمت، دوره آزمایشی و شرایط تمدید را در صفحه پرداخت بازار بررسی کن. برای جلوگیری از تمدید بعدی، اشتراک را از بخش اشتراک‌های حساب بازار لغو کن.",
+                "Subscriptions and renewals are managed through your Cafe Bazaar account. Review the price, trial and renewal terms on Bazaar checkout before confirming. Cancel from the subscriptions section of your Bazaar account to stop a future renewal."
             ),
-            onSelect = { onSelectPlan("PRO FAMILY") }
-        )
-        PlanCard(
-            fa = fa,
-            name = "LIFETIME OFFLINE",
-            subtitle = tr(fa, "مجوز یک‌باره برای ابزارهای محلی", "One-time licence for local tools"),
-            price = tr(fa, "قیمت هنگام عرضه", "Price at launch"),
-            badge = tr(fa, "به‌زودی", "COMING"),
-            highlighted = false,
-            features = listOf(
-                tr(fa, "قابلیت‌های محلی بدون سرویس ابری", "Local features without cloud dependency"),
-                tr(fa, "بدون تمدید اشتراک", "No subscription renewal"),
-                tr(fa, "به‌روزرسانی امنیتی طبق شرایط عرضه", "Security updates under release terms")
-            ),
-            onSelect = { onSelectPlan("LIFETIME OFFLINE") }
+            warning = false
         )
     }
 }
+
+@Composable
+private fun BazaarPlanCard(
+    fa: Boolean,
+    name: String,
+    subtitle: String,
+    offer: BazaarPlanOffer?,
+    trialAvailable: Boolean,
+    trialDays: Int,
+    entitled: Boolean,
+    loading: Boolean,
+    checkoutReady: Boolean,
+    onClick: () -> Unit
+) {
+    val available = offer != null
+    val enabled = available && checkoutReady && !entitled && !loading
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = SurfaceBase),
+        shape = RoundedCornerShape(21.dp)
+    ) {
+        Column(Modifier.padding(17.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(name, color = TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold)
+                    Text(subtitle, color = TextSecondary, fontSize = 11.sp)
+                }
+                StatusBadge(
+                    when {
+                        entitled -> tr(fa, "فعال", "ACTIVE")
+                        available && trialAvailable -> tr(fa, "آزمایش", "TRIAL")
+                        available -> tr(fa, "بازار", "BAZAAR")
+                        else -> tr(fa, "در دسترس نیست", "UNAVAILABLE")
+                    },
+                    if (entitled) ColorSuccess else BrandBlue
+                )
+            }
+            Text(
+                offer?.price ?: tr(fa, "قیمت از بازار دریافت نشد", "Price unavailable from Bazaar"),
+                color = TextPrimary,
+                fontSize = 19.sp,
+                fontWeight = FontWeight.Bold
+            )
+            if (available && trialAvailable && trialDays > 0) {
+                Text(
+                    tr(fa, "دوره آزمایشی واجدشرایط: $trialDays روز", "Eligible trial: $trialDays days"),
+                    color = ColorSuccess,
+                    fontSize = 11.sp
+                )
+            }
+            offer?.title?.takeIf { it.isNotBlank() }?.let {
+                Text(it, color = TextSecondary, fontSize = 11.sp)
+            }
+            offer?.description?.takeIf { it.isNotBlank() }?.let {
+                Text(it, color = TextTertiary, fontSize = 10.sp, lineHeight = 15.sp, maxLines = 3)
+            }
+            Button(
+                onClick = onClick,
+                enabled = enabled,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = BrandBlue),
+                shape = RoundedCornerShape(13.dp)
+            ) {
+                Text(
+                    when {
+                        entitled -> tr(fa, "اشتراک فعال است", "Subscription active")
+                        loading -> tr(fa, "در حال بررسی…", "Checking…")
+                        !checkoutReady -> tr(fa, "پرداخت هنوز آماده نیست", "Checkout not ready")
+                        !available -> tr(fa, "محصول در بازار موجود نیست", "Product not available")
+                        trialAvailable -> tr(fa, "ادامه در کافه‌بازار", "Continue with Cafe Bazaar")
+                        else -> tr(fa, "خرید از کافه‌بازار", "Buy with Cafe Bazaar")
+                    }
+                )
+            }
+        }
+    }
+}
+
 
 @Composable
 private fun PlanCard(
@@ -4028,7 +4143,7 @@ private fun featureDescription(fa: Boolean, feature: String): String = when (fea
     "quarantine" -> tr(fa, "با تأیید کاربر، نسخه AES-GCM در فضای خصوصی ذخیره و هش آن بررسی می‌شود؛ سپس حذف فایل مبدأ فقط در صورت اجازه Android یا ارائه‌دهنده فایل درخواست می‌شود. موتور ذخیره‌سازی فهرست، بازیابی و حذف را پشتیبانی می‌کند، اما صفحه مدیریتی کامل قرنطینه هنوز در رابط کاربری تکمیل نشده است.", "After user confirmation, an AES-GCM encrypted copy is stored in private app storage and its hash is verified. Source deletion is requested only if Android or the document provider allows it. The storage engine supports listing, restore and deletion, but a complete quarantine-management screen is not yet available in the UI.")
     "vulnerability" -> tr(fa, "این ماژول هنوز نتیجه آسیب‌پذیری واقعی تولید نمی‌کند. مرحله بعدی شامل شناسایی SDKها و کتابخانه‌ها و تطبیق آن‌ها با منابع CVE معتبر است.", "This module does not yet produce vulnerability findings. Next steps include SDK and library inventory mapped to trusted CVE sources.")
     "phishing" -> tr(fa, "بررسی ساختاری لینک به‌صورت آفلاین و روی دستگاه انجام می‌شود؛ لینک باز یا به اینترنت ارسال نمی‌شود. این بررسی اعتبار آنلاین دامنه یا محتوای صفحه را نمی‌سنجد و فیشینگ را قطعی تشخیص نمی‌دهد.", "URL structure is inspected offline on-device; the link is not opened or sent online. This does not check live domain reputation or page content and is not a definitive phishing verdict.")
-    "network" -> tr(fa, "محافظ شبکه هنوز فعال نیست. پیاده‌سازی آن به طراحی شفاف DNS/VPN محلی و بررسی سیاست‌های Android و Google Play نیاز دارد.", "Network protection is not active. Implementation requires transparent local DNS/VPN design and Android/Google Play policy review.")
+    "network" -> tr(fa, "محافظ شبکه هنوز فعال نیست. پیاده‌سازی آن به طراحی شفاف DNS/VPN محلی و بررسی سیاست‌های Android و فروشگاه مقصد نیاز دارد.", "Network protection is not active. Implementation requires transparent local DNS/VPN design and marketplace policy review.")
     "brain" -> tr(fa, "مسیر اسکن از هش‌های امضاشده، قواعد محتوایی امضاشده، تحلیل ایستای APK/DEX/ELF و امتیازدهی چندنشانه‌ای پشتیبانی می‌کند؛ اما این منابع تا انتشار و نصب بانک تولیدی معتبر فعال نیستند. مدل یادگیری ماشین هنوز NOT_CONFIGURED است و تحلیل رفتاری در sandbox اجرا نمی‌شود.", "The scan pipeline supports signed hash reputation, signed content rules, APK/DEX/ELF static analysis and multi-signal risk scoring. These production intelligence sources remain inactive until a valid feed and rule bundle are published and installed. On-device ML is still NOT_CONFIGURED, and runtime sandbox analysis is not active.")
     "selfdefense" -> tr(fa, "برنامه از تنظیمات پایه مانند غیرفعال‌بودن cleartext و backup استفاده می‌کند. پایش یکپارچگی زمان اجرا و دفاع در برابر دست‌کاری هنوز نیازمند توسعه و آزمون است.", "The app uses baseline controls such as disabled cleartext traffic and backup. Runtime integrity and anti-tamper monitoring still require implementation and testing.")
     "permissions" -> tr(fa, "اسکن سریع مسیرهای رایج حافظه را بررسی می‌کند. اسکن عمیق با اجازه مدیریت همه فایل‌ها، حافظه اشتراکی و APK برنامه‌های نصب‌شده را بررسی می‌کند؛ داده خصوصی برنامه‌های دیگر، Android/data و Android/obb قابل‌دسترسی نیستند.", "Quick scan checks common storage locations. Deep scan uses user-approved All files access to inspect shared storage and installed-app APKs; other apps’ private data, Android/data and Android/obb remain inaccessible.")

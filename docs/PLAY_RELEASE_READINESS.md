@@ -1,4 +1,6 @@
-# Google Play release-readiness checklist
+# Historical Google Play release-readiness checklist
+
+> This is a legacy checklist for a separate Google Play distribution path, not the active Cafe Bazaar candidate. The current regional Android release path is documented in `docs/CAFEBAZAAR_RELEASE_READINESS.md`. Do not apply the Google Play billing tasks in this file to the Cafe Bazaar branch.
 
 Last reviewed: 2026-11-18
 

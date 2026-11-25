@@ -32,7 +32,37 @@ import kotlinx.coroutines.withContext
  * content URIs or filesystem paths and never changes the local scan verdict.
  */
 @Composable
-fun CloudHashReputationCard(result: ScanResult, fa: Boolean) {
+fun CloudHashReputationCard(
+    result: ScanResult,
+    fa: Boolean,
+    premiumAccess: Boolean,
+    cloudAccessToken: String?,
+    onOpenStore: () -> Unit
+) {
+    val accessToken = cloudAccessToken?.let {
+        runCatching { BazaarBillingApi.validateCloudAccessToken(it) }.getOrNull()
+    }
+    if (!premiumAccess || accessToken == null) {
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    if (fa) "استعلام آنلاین هش — PLUS" else "Online hash reputation — PLUS",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    if (fa) "اسکن و گزارش محلی رایگان است. استعلام ابری فقط با اشتراک تأییدشده و رضایت جداگانه فعال می‌شود."
+                    else "Local scanning and reports remain free. Cloud reputation requires a verified subscription and separate consent.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Button(onClick = onOpenStore) {
+                    Text(if (fa) "مشاهده اشتراک‌ها" else "View subscriptions")
+                }
+            }
+        }
+        return
+    }
     val digest = result.sha256
     val validDigest = digest.matches(Regex("[0-9a-fA-F]{64}"))
     val scope = rememberCoroutineScope()
@@ -54,9 +84,9 @@ fun CloudHashReputationCard(result: ScanResult, fa: Boolean) {
             )
             Text(
                 text = if (fa) {
-                    "برای بررسی تکمیلی، فقط اثر انگشت SHA-256 فایل ارسال می‌شود؛ خود فایل، نام و مسیر آن ارسال نمی‌شوند."
+                    "برای بررسی تکمیلی، هش SHA-256 فایل و توکن کوتاه‌عمر اشتراک PLUS ارسال می‌شوند؛ خود فایل، نام و مسیر آن ارسال نمی‌شوند."
                 } else {
-                    "For an optional second opinion, only the file's SHA-256 digest is sent. The file, filename and path are never uploaded."
+                    "For an optional second opinion, the file's SHA-256 digest and a short-lived PLUS access token are sent. The file, filename and path are never uploaded."
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -143,9 +173,9 @@ fun CloudHashReputationCard(result: ScanResult, fa: Boolean) {
             text = {
                 Text(
                     if (fa) {
-                        "فقط مقدار SHA-256 این فایل به سرویس ابری فرستاده می‌شود. محتوای فایل، نام، مسیر و URI ارسال نمی‌شوند. سرویس ممکن است فراداده معمول اتصال، مانند نشانی IP، را برای محدودسازی درخواست‌ها پردازش کند. عدم وجود نتیجه، تضمین سالم بودن فایل نیست. آیا موافقی؟"
+                        "هش SHA-256 این فایل و یک توکن کوتاه‌عمر برای تأیید اشتراک PLUS به سرویس ابری فرستاده می‌شوند. محتوای فایل، نام، مسیر و URI ارسال نمی‌شوند. سرویس ممکن است فراداده اتصال مانند IP را برای محدودسازی درخواست‌ها پردازش کند. نبود نتیجه، تضمین سالم بودن فایل نیست. موافقی؟"
                     } else {
-                        "Only this file's SHA-256 digest will be sent to the cloud service. File contents, filename, path and URI are not sent. The service may process normal connection metadata, such as IP address, for rate limiting. No match is not proof of safety. Do you consent?"
+                        "This file's SHA-256 digest and a short-lived PLUS access token will be sent to the cloud service. File contents, filename, path and URI are not sent. The service may process normal connection metadata, such as an IP address, for rate limiting. No match is not proof of safety. Do you consent?"
                     }
                 )
             },
@@ -159,7 +189,7 @@ fun CloudHashReputationCard(result: ScanResult, fa: Boolean) {
                         scope.launch {
                             try {
                                 assessment = withContext(Dispatchers.IO) {
-                                    CloudThreatApi.checkSha256(digest)
+                                    CloudThreatApi.checkSha256(digest, accessToken)
                                 }
                             } catch (cancelled: CancellationException) {
                                 throw cancelled
