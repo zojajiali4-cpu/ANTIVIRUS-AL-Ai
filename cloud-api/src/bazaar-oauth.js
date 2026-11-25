@@ -1,6 +1,7 @@
 const AUTHORIZE_URL = "https://pardakht.cafebazaar.ir/devapi/v2/auth/authorize/";
 const TOKEN_URL = "https://pardakht.cafebazaar.ir/devapi/v2/auth/token/";
 const COOKIE = "__Host-alai-bazaar-oauth";
+const DEFAULT_REDIRECT_URI = "https://antivirus-al-ai-api.zojajiali4.workers.dev/v1/billing/bazaar/oauth/callback";
 const MAX_FORM_BYTES = 4096;
 const MAX_TOKEN_RESPONSE_BYTES = 16384;
 const encoder = new TextEncoder();
@@ -141,7 +142,7 @@ async function start(req, env) {
     );
   }
   if (req.method !== "POST") return html("درخواست پشتیبانی نمی‌شود.", 405);
-  const redirectUri = env.BAZAAR_OAUTH_REDIRECT_URI || "";
+  const redirectUri = env.BAZAAR_OAUTH_REDIRECT_URI || DEFAULT_REDIRECT_URI;
   let parsed;
   try { parsed = new URL(redirectUri); } catch { return html("تنظیم مسیر بازگشت معتبر نیست.", 503); }
   if (parsed.protocol !== "https:" || parsed.pathname !== "/v1/billing/bazaar/oauth/callback" ||
@@ -181,7 +182,7 @@ async function callback(req, env) {
     return html("پاسخ مجوزدهی معتبر نیست؛ فرایند را دوباره آغاز کنید.", 400);
   }
   if (!env.DB || !env.BAZAAR_CLIENT_ID || !env.BAZAAR_CLIENT_SECRET ||
-      !env.BAZAAR_OAUTH_REDIRECT_URI || !env.BAZAAR_TOKEN_ENCRYPTION_KEY) {
+      !(env.BAZAAR_OAUTH_REDIRECT_URI || DEFAULT_REDIRECT_URI) || !env.BAZAAR_TOKEN_ENCRYPTION_KEY) {
     return html("تنظیمات اتصال سرور کامل نیست.", 503, { "set-cookie": clearCookie });
   }
   const stateHash = await sha256Hex(state);
