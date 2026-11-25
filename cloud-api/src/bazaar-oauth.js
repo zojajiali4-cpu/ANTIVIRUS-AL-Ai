@@ -62,6 +62,7 @@ export async function readBazaarRefreshToken(env) {
     if (row?.iv && row?.ciphertext) {
       const key = await encryptionKey(env);
       const iv = decodeBase64Url(row.iv, 12);
+      if (row.ciphertext.length > 12000) throw Error("BAZAAR_TOKEN_STORAGE_INVALID");
       const encrypted = decodeBase64Url(row.ciphertext);
       const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, encrypted);
       const token = new TextDecoder("utf-8", { fatal: true }).decode(plaintext);
@@ -174,7 +175,7 @@ async function callback(req, env) {
   const cookie = cookieValue(req.headers.get("cookie"), COOKIE);
   const clearCookie = COOKIE + "=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Lax";
   if (!state || state.length > 128 || !equalSecret(state, cookie) ||
-      !/^[A-Za-z0-9._~-]{8,4096}$/.test(code)) {
+      !/^[\x21-\x7E]{8,4096}$/.test(code)) {
     return html("پاسخ مجوزدهی معتبر نیست؛ فرایند را دوباره آغاز کنید.", 400);
   }
   if (!env.DB || !env.BAZAAR_CLIENT_ID || !env.BAZAAR_CLIENT_SECRET ||
