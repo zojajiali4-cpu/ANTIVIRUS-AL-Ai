@@ -1,3 +1,5 @@
+import { handleBazaarOAuth, readBazaarRefreshToken, storeBazaarRefreshToken } from "./bazaar-oauth.js";
+
 const H = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" };
 const HASH = /^[a-f0-9]{64}$/;
 const KEY_ID = /^[A-Za-z0-9._-]{1,40}$/;
@@ -115,7 +117,6 @@ function isBazaarBillingConfigured(env) {
   return Boolean(
     typeof env.BAZAAR_CLIENT_ID === "string" && env.BAZAAR_CLIENT_ID.trim() &&
     typeof env.BAZAAR_CLIENT_SECRET === "string" && env.BAZAAR_CLIENT_SECRET.trim() &&
-    typeof env.BAZAAR_REFRESH_TOKEN === "string" && env.BAZAAR_REFRESH_TOKEN.trim() &&
     env.BAZAAR_PACKAGE_NAME === "com.antivirusalai" &&
     typeof env.BAZAAR_SUBSCRIPTION_MONTHLY_ID === "string" &&
     typeof env.BAZAAR_SUBSCRIPTION_ANNUAL_ID === "string" &&
@@ -146,11 +147,12 @@ async function readBazaarJson(response) {
 
 async function fetchBazaarAccessToken(env) {
   if (!isBazaarBillingConfigured(env)) throw Error("BAZAAR_BILLING_NOT_CONFIGURED");
+  const refreshToken = await readBazaarRefreshToken(env);
   const form = new URLSearchParams({
     grant_type: "refresh_token",
     client_id: env.BAZAAR_CLIENT_ID,
     client_secret: env.BAZAAR_CLIENT_SECRET,
-    refresh_token: env.BAZAAR_REFRESH_TOKEN
+    refresh_token: refreshToken
   });
   let response;
   try {
@@ -170,6 +172,10 @@ async function fetchBazaarAccessToken(env) {
   const token = await readBazaarJson(response);
   if (typeof token.access_token !== "string" || !token.access_token.length ||
       token.access_token.length > 8192) throw Error("BAZAAR_TOKEN_RESPONSE_INVALID");
+  if (typeof token.refresh_token === "string" && token.refresh_token.length &&
+      token.refresh_token !== refreshToken) {
+    await storeBazaarRefreshToken(env, token.refresh_token);
+  }
   return token.access_token;
 }
 
@@ -349,6 +355,9 @@ export default { async fetch(req,env){
      error?.message==="RATE_LIMIT_KEY_NOT_CONFIGURED"?"RATE_LIMIT_KEY_NOT_CONFIGURED":
      error?.message==="CLIENT_ADDRESS_UNAVAILABLE"?"CLIENT_ADDRESS_UNAVAILABLE":"RATE_LIMIT_STORAGE_UNAVAILABLE";
    return out({error:code},503);
+ }
+ if(p==="/v1/billing/bazaar/oauth/start" || p==="/v1/billing/bazaar/oauth/callback"){
+   return handleBazaarOAuth(req,env,p);
  }
  if(p==="/v1/url/check"&&req.method==="POST"){
    try{
