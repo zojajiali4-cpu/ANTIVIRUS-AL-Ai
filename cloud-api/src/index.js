@@ -110,25 +110,33 @@ function derEcdsaToRaw(der){
  const raw=new Uint8Array(64); raw.set(r,0); raw.set(s,32); return raw;
 }
 
+function bazaarMonthlySubscriptionId(env) {
+  return env.BAZAAR_SUBSCRIPTION_MONTHLY_ID || env.BAZAAR_MONTHLY_PRODUCT_ID || "";
+}
+
+function bazaarAnnualSubscriptionId(env) {
+  return env.BAZAAR_SUBSCRIPTION_ANNUAL_ID || env.BAZAAR_ANNUAL_PRODUCT_ID || "";
+}
+
 function isBazaarBillingConfigured(env) {
   const secret = typeof env.PLUS_ENTITLEMENT_HMAC_SECRET === "string"
     ? env.PLUS_ENTITLEMENT_HMAC_SECRET : "";
   const secretLength = new TextEncoder().encode(secret).byteLength;
+  const monthlyId = bazaarMonthlySubscriptionId(env);
+  const annualId = bazaarAnnualSubscriptionId(env);
   return Boolean(
     typeof env.BAZAAR_CLIENT_ID === "string" && env.BAZAAR_CLIENT_ID.trim() &&
     typeof env.BAZAAR_CLIENT_SECRET === "string" && env.BAZAAR_CLIENT_SECRET.trim() &&
     env.BAZAAR_PACKAGE_NAME === "com.antivirusalai" &&
-    typeof env.BAZAAR_SUBSCRIPTION_MONTHLY_ID === "string" &&
-    typeof env.BAZAAR_SUBSCRIPTION_ANNUAL_ID === "string" &&
-    /^[A-Za-z0-9._-]{3,100}$/.test(env.BAZAAR_SUBSCRIPTION_MONTHLY_ID) &&
-    /^[A-Za-z0-9._-]{3,100}$/.test(env.BAZAAR_SUBSCRIPTION_ANNUAL_ID) &&
-    env.BAZAAR_SUBSCRIPTION_MONTHLY_ID !== env.BAZAAR_SUBSCRIPTION_ANNUAL_ID &&
+    /^[A-Za-z0-9._-]{3,100}$/.test(monthlyId) &&
+    /^[A-Za-z0-9._-]{3,100}$/.test(annualId) &&
+    monthlyId !== annualId &&
     secretLength >= 32 && secretLength <= 4096
   );
 }
 
 function bazaarSubscriptionIds(env) {
-  return [env.BAZAAR_SUBSCRIPTION_MONTHLY_ID, env.BAZAAR_SUBSCRIPTION_ANNUAL_ID];
+  return [bazaarMonthlySubscriptionId(env), bazaarAnnualSubscriptionId(env)];
 }
 
 async function readBazaarJson(response) {
@@ -375,13 +383,13 @@ export default { async fetch(req,env){
  }
  if(p==="/v1/billing/bazaar/status"&&req.method==="GET"){
    if(!isBazaarBillingConfigured(env)){
-     return out({ok:true,checkoutReady:false,monthlySku:env.BAZAAR_SUBSCRIPTION_MONTHLY_ID||null,
-       annualSku:env.BAZAAR_SUBSCRIPTION_ANNUAL_ID||null,reason:"NOT_CONFIGURED"});
+     return out({ok:true,checkoutReady:false,monthlySku:bazaarMonthlySubscriptionId(env)||null,
+       annualSku:bazaarAnnualSubscriptionId(env)||null,reason:"NOT_CONFIGURED"});
    }
    try{
      await fetchBazaarAccessToken(env);
-     return out({ok:true,checkoutReady:true,monthlySku:env.BAZAAR_SUBSCRIPTION_MONTHLY_ID,
-       annualSku:env.BAZAAR_SUBSCRIPTION_ANNUAL_ID});
+     return out({ok:true,checkoutReady:true,monthlySku:bazaarMonthlySubscriptionId(env),
+       annualSku:bazaarAnnualSubscriptionId(env)});
    }catch(error){
      const code=error?.message||"";
      if(code==="BAZAAR_REFRESH_TOKEN_NOT_CONFIGURED"){
