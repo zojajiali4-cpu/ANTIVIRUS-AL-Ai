@@ -12,11 +12,19 @@
 
 1. Create the two auto-renewing subscription products using the exact SKU identifiers above.
 2. Configure localized price, regional availability, trial offers and billing terms in Pishkhan. Prices and eligible trial duration are queried at runtime; the app does not hardcode them.
-3. Create/authorize a Developer API client for this app and obtain its Client ID, Client Secret and Refresh Token.
-4. Configure Worker secrets: `BAZAAR_CLIENT_ID`, `BAZAAR_CLIENT_SECRET`, `BAZAAR_REFRESH_TOKEN`, `PLUS_ENTITLEMENT_HMAC_SECRET`, and `RATE_SALT`. Keep all values outside GitHub source, app assets, and chat.
-5. Apply `cloud-api/migrations/0001_bazaar_billing.sql` to the Worker D1 database.
-6. Verify `GET /v1/billing/bazaar/status` returns `checkoutReady: true` and both expected SKUs, then deploy the Worker after reviewing the configuration.
-7. Test a valid new purchase, restore after reinstall, canceled-but-still-valid subscription, expired/refunded token, wrong product, invalid token, Bazaar outage, missing credentials and ineligible trial account.
+3. Create the Developer API client in Pishkhan using this exact HTTPS Redirect URI:
+   `https://antivirus-al-ai-api.zojajiali4.workers.dev/v1/billing/bazaar/oauth/callback`
+4. After the client is created, configure these Cloudflare Worker secrets (never commit or send them in chat):
+   - `BAZAAR_CLIENT_ID`
+   - `BAZAAR_CLIENT_SECRET`
+   - `BAZAAR_OAUTH_SETUP_KEY` (random, at least 32 characters; used only to authorize the one-time browser setup form)
+   - `BAZAAR_TOKEN_ENCRYPTION_KEY` (32 random bytes encoded as unpadded base64url; generate with `openssl rand -base64 32 | tr '+/' '-_' | tr -d '=' `)
+   - `PLUS_ENTITLEMENT_HMAC_SECRET`
+   - `RATE_SALT`
+   A `BAZAAR_REFRESH_TOKEN` secret is no longer required. The OAuth callback stores the refresh token encrypted with AES-GCM in D1 and refresh-token rotation is persisted encrypted.
+5. Deploy the Worker with `BAZAAR_OAUTH_REDIRECT_URI` set in `cloud-api/wrangler.toml`, then apply migrations `0001_bazaar_billing.sql` and `0002_bazaar_oauth.sql` in order.
+6. Open `https://antivirus-al-ai-api.zojajiali4.workers.dev/v1/billing/bazaar/oauth/start`, enter the `BAZAAR_OAUTH_SETUP_KEY` in the HTTPS form, and approve the authorization in Cafe Bazaar. The state is one-time, browser-cookie-bound and expires after 10 minutes. The authorization code is exchanged server-side; the refresh token is never displayed or placed in a URL.
+7. Verify `GET /v1/billing/bazaar/status` returns `checkoutReady: true` and both expected SKUs, then test a valid new purchase, restore after reinstall, canceled-but-still-valid subscription, expired/refunded token, wrong product, invalid token, Bazaar outage, missing credentials and ineligible trial account.
 
 ## App and security validation
 
