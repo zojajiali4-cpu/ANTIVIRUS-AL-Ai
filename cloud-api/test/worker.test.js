@@ -102,7 +102,7 @@ function signedPlusAccessToken(overrides = {}) {
   const now = Math.floor(Date.now() / 1000);
   const claims = {
     v: 1, aud: "antivirus-al-ai:hash-reputation",
-    productId: BAZAAR_MONTHLY, packageName: "com.antivirusalai",
+    productId: BAZAAR_MONTHLY, basePlanId: "monthly", subscriptionState: "SUBSCRIPTION_STATE_ACTIVE", packageName: "com.antivirusalai",
     iat: now, exp: now + 300, subscriptionExpiresAt: now + 3600,
     ...overrides
   };
