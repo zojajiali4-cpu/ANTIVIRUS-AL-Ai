@@ -12,3 +12,5 @@ database_id = "ba528591-877f-4683-a611-266d1a472b2e"
 BAZAAR_PACKAGE_NAME = "com.antivirusalai"
 BAZAAR_SUBSCRIPTION_MONTHLY_ID = "alai_plus_monthly"
 BAZAAR_SUBSCRIPTION_ANNUAL_ID = "alai_plus_annual"
+
+BAZAAR_OAUTH_REDIRECT_URI = "https://antivirus-al-ai-api.zojajiali4.workers.dev/v1/billing/bazaar/oauth/callback"
