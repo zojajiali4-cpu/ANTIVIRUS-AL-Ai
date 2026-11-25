@@ -59,10 +59,10 @@ A plaintext `BAZAAR_REFRESH_TOKEN` secret is not required. Register the exact ca
 
 The non-secret `wrangler.toml` variables pin package `com.antivirusalai` and subscription SKUs `alai_plus_monthly` / `alai_plus_annual`. Create these products and regional prices in Pishkhan before enabling checkout.
 
-Apply the migration:
+Apply migrations `0001_bazaar_billing.sql`, `0002_bazaar_oauth.sql`, and `0003_legacy_billing_verifications.sql` in order. Migration 0003 preserves the already-deployed Play and legacy Bazaar verification tables for clean D1 installs:
 
 ```sh
 wrangler d1 migrations apply antivirus-al-ai-threat-intel --remote
 ```
 
-The Bazaar routes are `GET /v1/billing/bazaar/status`, `POST /v1/billing/bazaar/verify`, and the owner-operated OAuth setup/callback routes `/v1/billing/bazaar/oauth/start` and `/v1/billing/bazaar/oauth/callback`. Checkout remains disabled until the Worker can authenticate to Bazaar and the client receives matching SKU details from Poolakey. This source change does not create products, authorize a Developer API client, obtain credentials, set Worker secrets, apply the production migration, or deploy the Worker.
+The Bazaar routes are `GET /v1/billing/bazaar/status`, `POST /v1/billing/bazaar/verify`, and the owner-operated OAuth setup/callback routes `/v1/billing/bazaar/oauth/start` and `/v1/billing/bazaar/oauth/callback`. Existing Google Play routes (`/v1/billing/status` and `/v1/billing/subscription/verify`) and legacy Bazaar routes (`/v1/bazaar/status` and `/v1/bazaar/subscription/verify`) remain available. Checkout remains disabled until the Worker can authenticate to Bazaar and the client receives matching SKU details from Poolakey. This source change does not create products, authorize a Developer API client, obtain credentials, set Worker secrets, apply the production migration, or deploy the Worker.
