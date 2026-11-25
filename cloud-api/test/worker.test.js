@@ -92,6 +92,8 @@ function bazaarEnvironment(db = makeD1()) {
     BAZAAR_PACKAGE_NAME: "com.antivirusalai",
     BAZAAR_SUBSCRIPTION_MONTHLY_ID: BAZAAR_MONTHLY,
     BAZAAR_SUBSCRIPTION_ANNUAL_ID: BAZAAR_ANNUAL,
+    BAZAAR_MONTHLY_PRODUCT_ID: BAZAAR_MONTHLY,
+    BAZAAR_ANNUAL_PRODUCT_ID: BAZAAR_ANNUAL,
     PLUS_ENTITLEMENT_HMAC_SECRET
   };
 }
@@ -126,7 +128,10 @@ async function withBazaarApi(subscription, callback, { tokenStatus = 200, subscr
       ), { status: tokenStatus, headers: { "content-type": "application/json" } });
     }
     if (url.includes("/devapi/v2/api/applications/com.antivirusalai/subscriptions/")) {
-      return new Response(JSON.stringify(subscription || {}), {
+      const payload = subscription && typeof subscription === "object"
+        ? { initiationTimestampMsec: String(Date.now() - 60_000), ...subscription }
+        : (subscription || {});
+      return new Response(JSON.stringify(payload), {
         status: subscriptionStatus, headers: { "content-type": "application/json" }
       });
     }
