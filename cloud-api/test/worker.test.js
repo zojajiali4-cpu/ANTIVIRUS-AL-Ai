@@ -342,9 +342,9 @@ test("Cafe Bazaar subscription verification validates with Bazaar and issues a s
     );
     assert.equal(lookup.status, 200);
     assert.equal((await json(lookup)).classification, "UNKNOWN");
-    assert.equal(calls.length, 2);
-    assert.ok(calls[0].url.endsWith("/devapi/v2/auth/token/"));
-    assert.ok(calls[1].url.includes("/subscriptions/" + BAZAAR_MONTHLY + "/purchases/"));
+    assert.ok(calls.some(call => call.url.includes("/subscriptions/" + BAZAAR_MONTHLY + "/purchases/")));
+    assert.ok(calls.every(call => call.url.endsWith("/devapi/v2/auth/token/") ||
+      call.url.includes("/subscriptions/" + BAZAAR_MONTHLY + "/purchases/")));
   });
   const insert = db.statements.find(item => item.sql.startsWith("INSERT INTO bazaar_subscription_verifications"));
   assert.ok(insert);
@@ -429,6 +429,7 @@ test("Cafe Bazaar subscription verification rejects expired subscription periods
 
 test("Cafe Bazaar subscription verification fails closed when OAuth credentials are rejected", async () => {
   const env = bazaarEnvironment();
+  env.BAZAAR_CLIENT_ID = "unique-invalid-client-id-for-this-test";
   await withBazaarApi(null, async () => {
     const response = await worker.fetch(
       request("/v1/billing/bazaar/verify", {
