@@ -62,6 +62,40 @@ class ScanCoverageTest {
     }
 
     @Test
+    fun traversalGapNeverReportsFullScopeCompletionEvenWhenListedFilesWereAccounted() {
+        val report = FolderScanReport(
+            items = emptyList(),
+            failures = listOf(FolderScanFailure("Download", "Directory listing was blocked")),
+            discoveredFiles = 10,
+            skippedFiles = 0,
+            truncated = true,
+            scannedCountOverride = 10
+        )
+
+        assertEquals(100, report.scanCoveragePercent)
+        assertEquals(99, report.completionPercent)
+        assertFalse(report.fullScanCoverage)
+    }
+
+    @Test
+    fun knownMalwareCountUsesAllAggregatedResultsInsteadOfTheVisiblePreview() {
+        val report = FolderScanReport(
+            items = emptyList(),
+            failures = emptyList(),
+            discoveredFiles = 4,
+            skippedFiles = 0,
+            truncated = false,
+            scannedCountOverride = 4,
+            coverageMatrix = listOf(
+                ScanCoverageCell("APK", ScanVerdict.KNOWN_MALWARE, 2),
+                ScanCoverageCell("ZIP", ScanVerdict.NO_KNOWN_INDICATOR, 2)
+            )
+        )
+
+        assertEquals(2, report.knownMalwareCount)
+    }
+
+    @Test
     fun emptySuccessfulScopeHasFullCoverageButUnavailableScopeDoesNot() {
         val empty = FolderScanReport(emptyList(), emptyList(), 0, 0, false)
         val unavailable = FolderScanReport(
