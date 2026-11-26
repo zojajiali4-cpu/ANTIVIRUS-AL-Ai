@@ -29,6 +29,32 @@ class EicarTestDetectorTest {
     }
 
     @Test
+    fun incrementalMatcherKeepsStateAcrossArbitraryChunkBoundaries() {
+        val bytes = ("prefix-" + eicar + "-suffix").toByteArray(Charsets.US_ASCII)
+        val matcher = EicarTestDetector.StreamingMatcher()
+
+        matcher.update(bytes, 0, 11)
+        assertFalse(matcher.found)
+        matcher.update(bytes, 11, 19)
+        assertFalse(matcher.found)
+        matcher.update(bytes, 30, bytes.size - 30)
+
+        assertTrue(matcher.found)
+    }
+
+    @Test
+    fun incrementalMatcherRejectsNearMissAcrossChunks() {
+        val bytes = ("prefix-" + eicar.dropLast(1) + "X").toByteArray(Charsets.US_ASCII)
+        val matcher = EicarTestDetector.StreamingMatcher()
+
+        bytes.asList().chunked(7).forEach { chunk ->
+            matcher.update(chunk.toByteArray())
+        }
+
+        assertFalse(matcher.found)
+    }
+
+    @Test
     fun usesTheStandardEicarTestStringLength() {
         assertEquals(68, eicar.length)
     }
