@@ -86,22 +86,41 @@ data class FolderScanReport(
     }
     val matchedCount: Int get() = matchedCountOverride ?: items.count { it.result.verdict == ScanVerdict.TEST_MARKER_MATCH }
 
-    /** Percentage of known file candidates that actually completed the scanner. */
+    /** Actual analysis ratio; files skipped by the engine remain visible in this value. */
     val scanCoveragePercent: Int get() =
         if (discoveredFiles == 0) {
-            if (!truncated && failures.isEmpty()) 100 else 0
+            if (!truncated) 100 else 0
         } else ((scannedCount * 100L) / discoveredFiles).toInt().coerceIn(0, 100)
+
+    /** Number of discovered files with a final analyzed-or-not-analyzed disposition. */
+    val accountedFiles: Int get() =
+        (scannedCount + skippedFiles).coerceAtMost(discoveredFiles)
+
+    /** Completion of the accessible inventory, not the percentage successfully analyzed. */
+    val completionPercent: Int get() =
+        if (discoveredFiles == 0) {
+            if (fullScanCoverage) 100 else 0
+        } else ((accountedFiles * 100L) / discoveredFiles).toInt().coerceIn(0, 100)
+
+    /** Exact known-malware count across all scanner results, not only the UI preview. */
+    val knownMalwareCount: Int get() =
+        coverageMatrix.filter { it.verdict == ScanVerdict.KNOWN_MALWARE }.sumOf { it.count }
+            .takeIf { it > 0 }
+            ?: items.count { it.result.verdict == ScanVerdict.KNOWN_MALWARE }
 
     /** Files with no scanned result and no explicit skip/failure disposition. */
     val unaccountedFiles: Int get() =
         (discoveredFiles - scannedCount - skippedFiles).coerceAtLeast(0)
 
-    /** True only when every known candidate has a terminal scanned-or-skipped disposition. */
     val allDiscoveredFilesAccounted: Boolean get() = unaccountedFiles == 0
 
-    /** True only when all known files were scanned and traversal did not report gaps. */
+    /**
+     * Full scope completion means every Android-accessible path in this scan scope
+     * was enumerated and every discovered file has a final disposition. Skips
+     * remain visible in their own counter and do not hold the progress below 100%.
+     */
     val fullScanCoverage: Boolean get() =
-        allDiscoveredFilesAccounted && skippedFiles == 0 && !truncated && failures.isEmpty()
+        allDiscoveredFilesAccounted && !truncated
 }
 
 /**
