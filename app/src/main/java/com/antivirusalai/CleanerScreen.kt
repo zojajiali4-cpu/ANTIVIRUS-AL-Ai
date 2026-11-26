@@ -10,8 +10,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.weight
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -108,8 +106,8 @@ fun CleanerScreen(fa: Boolean, onBack: () -> Unit) {
                                 val roots = listOfNotNull(context.cacheDir, context.externalCacheDir)
                                 roots.sumOf { root ->
                                     val before = root.walkTopDown().filter { it.isFile }.sumOf { it.length() }
-                                    root.listFiles()?.forEach { it.deleteRecursively() }
-                                    before
+                                    val cleared = root.listFiles()?.all { it.deleteRecursively() } ?: true
+                                    if (cleared) before else 0L
                                 }
                             }
                             message = cleanerTr(fa, "پاک‌سازی حافظه موقت برنامه انجام شد.", "App temporary cache cleared.")
@@ -159,8 +157,8 @@ fun CleanerScreen(fa: Boolean, onBack: () -> Unit) {
                 color = CleanerWarning, fontSize = 13.sp)
             Text(cleanerTr(fa, "موارد انتخاب‌شده: ${formatCleanerBytes(selectedBytes)}", "Selected: ${formatCleanerBytes(selectedBytes)}"),
                 color = CleanerTextSecondary, fontSize = 12.sp)
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                items(items, key = { it.uri.toString() }) { item ->
+            Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                items.take(40).forEach { item ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(
                             checked = selected.contains(item.uri.toString()),
@@ -173,6 +171,10 @@ fun CleanerScreen(fa: Boolean, onBack: () -> Unit) {
                             Text("${item.reason} · ${formatCleanerBytes(item.size)}", color = CleanerTextSecondary, fontSize = 10.sp)
                         }
                     }
+                }
+                if (items.size > 40) {
+                    Text(cleanerTr(fa, "۴۰ مورد اول نمایش داده شده‌اند؛ انتخاب گروهی شامل همه موارد است.", "Showing first 40 items; bulk selection includes all results."),
+                        color = CleanerTextSecondary, fontSize = 10.sp)
                 }
             }
             Button(
@@ -200,13 +202,14 @@ fun CleanerScreen(fa: Boolean, onBack: () -> Unit) {
                     scope.launch {
                         deleting = true
                         val chosen = items.filter { selected.contains(it.uri.toString()) }
-                        val deleted = withContext(Dispatchers.IO) {
-                            chosen.count { DocumentFile.fromSingleUri(context, it.uri)?.delete() == true }
+                        val deletedUris = withContext(Dispatchers.IO) {
+                            chosen.filter { DocumentFile.fromSingleUri(context, it.uri)?.delete() == true }
+                                .map { it.uri.toString() }.toSet()
                         }
-                        items = items.filterNot { selected.contains(it.uri.toString()) }
-                        selected = emptySet()
+                        items = items.filterNot { deletedUris.contains(it.uri.toString()) }
+                        selected = selected - deletedUris
                         deleting = false
-                        message = cleanerTr(fa, "$deleted فایل با موفقیت حذف شد.", "$deleted files deleted successfully.")
+                        message = cleanerTr(fa, "${deletedUris.size} فایل با موفقیت حذف شد.", "${deletedUris.size} files deleted successfully.")
                     }
                 }) { Text(cleanerTr(fa, "حذف", "Delete")) }
             },
@@ -236,7 +239,6 @@ private suspend fun scanCleanerTree(context: android.content.Context, rootUri: U
     val candidates = LinkedHashMap<String, CleanerItem>()
     files.forEach { file ->
         val name = file.name ?: return@forEach
-        val ext = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
         if (CleanerPolicy.isTemporaryName(name)) {
             candidates[file.uri.toString()] = CleanerItem(file.uri, name, file.length(),
                 "Temporary-file extension")
