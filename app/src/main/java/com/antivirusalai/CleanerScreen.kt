@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.StatFs
+import android.os.storage.StorageManager
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -999,12 +1000,26 @@ private fun hasCleanerBroadAccess(context: Context): Boolean =
 private fun findCleanerStorageRoots(context: Context): List<File> {
     val roots = LinkedHashMap<String, File>()
     val candidates = ArrayList<File>()
+
+    // Primary shared storage.
     candidates.add(Environment.getExternalStorageDirectory())
+
+    // Public roots exposed by Android's StorageManager, including mounted
+    // removable media when the platform exposes a filesystem directory.
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        val storageManager = context.getSystemService(StorageManager::class.java)
+        storageManager?.storageVolumes?.forEach { volume ->
+            runCatching { volume.directory }.getOrNull()?.let(candidates::add)
+        }
+    }
+
+    // Fallback discovery for secondary app-visible volumes on supported devices.
     context.getExternalFilesDirs(null).filterNotNull().forEach { appFiles ->
         val marker = "/Android/data/"
         val index = appFiles.absolutePath.indexOf(marker)
         if (index > 0) candidates.add(File(appFiles.absolutePath.substring(0, index)))
     }
+
     candidates.forEach { candidate ->
         val root = runCatching { candidate.canonicalFile }.getOrNull() ?: return@forEach
         if (root.isDirectory && root.canRead()) roots[root.path] = root
