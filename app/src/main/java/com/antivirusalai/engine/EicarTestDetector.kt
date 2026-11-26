@@ -44,8 +44,8 @@ object EicarTestDetector {
                 while (matched > 0 && value != pattern[matched]) {
                     matched = prefix[matched - 1]
                 }
-                if (value == pattern[matched]) matched++
-                if (matched == pattern.size) {
+                if (value == EicarTestDetector.pattern[matched]) matched++
+                if (matched == EicarTestDetector.pattern.size) {
                     found = true
                     return
                 }
