@@ -269,7 +269,7 @@ fun CleanerScreen(fa: Boolean, onBack: () -> Unit) {
                     ),
                     color = CleanerTextSecondary, fontSize = 11.sp, lineHeight = 16.sp
                 )
-                if (!hasBroadAccess) {
+                if (!hasBroadAccess && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                     Button(
                         onClick = {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
