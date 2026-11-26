@@ -37,9 +37,10 @@ class ScanCoverageTest {
 
         assertEquals(7, report.scannedCount)
         assertEquals(70, report.scanCoveragePercent)
+        assertEquals(100, report.completionPercent)
         assertEquals(0, report.unaccountedFiles)
         assertTrue(report.allDiscoveredFilesAccounted)
-        assertFalse(report.fullScanCoverage)
+        assertTrue(report.fullScanCoverage)
     }
 
     @Test
@@ -54,6 +55,7 @@ class ScanCoverageTest {
         )
 
         assertEquals(40, report.scanCoveragePercent)
+        assertEquals(60, report.completionPercent)
         assertEquals(4, report.unaccountedFiles)
         assertFalse(report.allDiscoveredFilesAccounted)
         assertFalse(report.fullScanCoverage)
@@ -71,8 +73,10 @@ class ScanCoverageTest {
         )
 
         assertEquals(100, empty.scanCoveragePercent)
+        assertEquals(100, empty.completionPercent)
         assertTrue(empty.fullScanCoverage)
         assertEquals(0, unavailable.scanCoveragePercent)
+        assertEquals(0, unavailable.completionPercent)
         assertFalse(unavailable.fullScanCoverage)
     }
     @Test
