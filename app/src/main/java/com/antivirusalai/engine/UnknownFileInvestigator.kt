@@ -2,6 +2,7 @@ package com.antivirusalai.engine
 
 import android.content.Context
 import org.json.JSONArray
+import java.util.LinkedHashMap
 import org.json.JSONObject
 
 /**
@@ -63,33 +64,52 @@ object UnknownFileInvestigationStore {
     private const val KEY_CASES = "cases"
     private const val MAX_CASES = 100
 
-    fun record(context: Context, item: UnknownFileCase) {
+    fun record(context: Context, item: UnknownFileCase) = recordBatch(context, listOf(item))
+
+    /**
+     * Merge a scan batch with one read and one preference write. Device/folder
+     * scans call this in bounded batches instead of rewriting the same JSON
+     * preference once for every unknown file.
+     */
+    fun recordBatch(context: Context, items: List<UnknownFileCase>) {
+        if (items.isEmpty()) return
+        val incoming = LinkedHashMap<String, UnknownFileCase>()
+        items.forEach { item ->
+            val hash = item.sha256.lowercase()
+            if (hash.matches(Regex("^[a-f0-9]{64}$"))) incoming[hash] = item
+        }
+        if (incoming.isEmpty()) return
+
         val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val current = runCatching {
             JSONArray(prefs.getString(KEY_CASES, "[]") ?: "[]")
         }.getOrDefault(JSONArray())
+        val incomingHashes = incoming.keys
+        val merged = ArrayList<JSONObject>(current.length() + incoming.size)
 
-        val retained = JSONArray()
         for (index in 0 until current.length()) {
             val existing = current.optJSONObject(index) ?: continue
-            if (!existing.optString("sha256").equals(item.sha256, ignoreCase = true)) {
-                retained.put(existing)
+            if (existing.optString("sha256").lowercase() !in incomingHashes) {
+                merged += existing
             }
         }
 
-        val encoded = JSONObject()
-            .put("sha256", item.sha256)
-            .put("size_bytes", item.sizeBytes)
-            .put("mime_type", item.mimeType)
-            .put("detected_format", item.detectedFormat)
-            .put("verdict", item.verdict.name)
-            .put("analysis_complete", item.analysisComplete)
-            .put("created_at_ms", item.createdAtMillis)
-            .put("remote_lookup_state", item.remoteLookupState)
-            .put("evidence_codes", JSONArray(item.evidenceCodes))
-        val bounded = JSONArray().put(encoded)
-        val start = (retained.length() - (MAX_CASES - 1)).coerceAtLeast(0)
-        for (index in start until retained.length()) bounded.put(retained.getJSONObject(index))
+        incoming.values.forEach { item ->
+            merged += JSONObject()
+                .put("sha256", item.sha256.lowercase())
+                .put("size_bytes", item.sizeBytes)
+                .put("mime_type", item.mimeType)
+                .put("detected_format", item.detectedFormat)
+                .put("verdict", item.verdict.name)
+                .put("analysis_complete", item.analysisComplete)
+                .put("created_at_ms", item.createdAtMillis)
+                .put("remote_lookup_state", item.remoteLookupState)
+                .put("evidence_codes", JSONArray(item.evidenceCodes))
+        }
+
+        val start = (merged.size - MAX_CASES).coerceAtLeast(0)
+        val bounded = JSONArray()
+        for (index in start until merged.size) bounded.put(merged[index])
         prefs.edit().putString(KEY_CASES, bounded.toString()).apply()
     }
 
