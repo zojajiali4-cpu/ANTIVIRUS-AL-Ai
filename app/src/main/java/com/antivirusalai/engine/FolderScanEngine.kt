@@ -100,7 +100,10 @@ data class FolderScanReport(
     val completionPercent: Int get() =
         if (discoveredFiles == 0) {
             if (fullScanCoverage) 100 else 0
-        } else ((accountedFiles * 100L) / discoveredFiles).toInt().coerceIn(0, 100)
+        } else {
+            val accountedPercent = ((accountedFiles * 100L) / discoveredFiles).toInt().coerceIn(0, 100)
+            if (fullScanCoverage) accountedPercent else accountedPercent.coerceAtMost(99)
+        }
 
     /** Exact known-malware count across all scanner results, not only the UI preview. */
     val knownMalwareCount: Int get() =
