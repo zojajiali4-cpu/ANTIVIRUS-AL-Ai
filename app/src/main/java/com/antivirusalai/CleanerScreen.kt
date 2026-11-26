@@ -187,7 +187,7 @@ fun CleanerScreen(fa: Boolean, onBack: () -> Unit) {
 
     val selectedBytes = scanResult?.candidates
         ?.filter { selectedIds.contains(it.id) }
-        ?.fold(0L) { total, item -> CleanerPolicy.saturatedAdd(total, item.size } ?: 0L
+        ?.fold(0L) { total, item -> CleanerPolicy.saturatedAdd(total, item.size) } ?: 0L
     val storageStats = remember(hasBroadAccess) {
         if (hasBroadAccess) readCleanerStorageStats() else null
     }
@@ -707,7 +707,7 @@ private suspend fun scanSharedStorage(context: Context): CleanerScanResult {
     }
 
     val files = ArrayList<CleanerScannableFile>()
-    val failures = 0
+    var failures = 0
     var visitedDirectories = 0
     var truncated = false
 
@@ -728,6 +728,7 @@ private suspend fun scanSharedStorage(context: Context): CleanerScanResult {
             }
             val canonicalDirectory = runCatching { directory.canonicalFile }.getOrNull()
             if (canonicalDirectory == null || !CleanerPolicy.isWithinRoot(canonicalDirectory, root)) {
+                failures++
                 truncated = true
                 continue
             }
@@ -742,6 +743,7 @@ private suspend fun scanSharedStorage(context: Context): CleanerScanResult {
                 null
             }
             if (children == null) {
+                failures++
                 truncated = true
                 continue
             }
@@ -749,6 +751,7 @@ private suspend fun scanSharedStorage(context: Context): CleanerScanResult {
                 currentCoroutineContext().ensureActive()
                 val canonicalChild = runCatching { child.canonicalFile }.getOrNull()
                 if (canonicalChild == null || !CleanerPolicy.isWithinRoot(canonicalChild, root)) {
+                    failures++
                     truncated = true
                     continue
                 }
@@ -759,6 +762,7 @@ private suspend fun scanSharedStorage(context: Context): CleanerScanResult {
                     }
                 } else if (child.isFile) {
                     if (!child.canRead()) {
+                        failures++
                         truncated = true
                         continue
                     }
@@ -901,13 +905,14 @@ private suspend fun analyzeCleanerFiles(
             currentCoroutineContext().ensureActive()
             val remainingBudget = CLEANER_HASH_BUDGET_BYTES - hashedBytes
             if (remainingBudget <= 0L || file.size > remainingBudget) continue
-            val hash = try {
-                hashCleanerFile(context, file)
+            val hashResult = try {
+                hashCleanerFile(context, file, remainingBudget)
             } catch (_: Exception) {
                 null
             }
-            if (hash != null) {
-                hashedBytes = CleanerPolicy.saturatedAdd(hashedBytes, file.size)
+            if (hashResult != null) {
+                val (hash, bytesRead) = hashResult
+                hashedBytes = CleanerPolicy.saturatedAdd(hashedBytes, bytesRead)
                 if (firstByHash.putIfAbsent(hash, file) != null) {
                     addReason(file, CleanerReason.DUPLICATE)
                 }
@@ -926,22 +931,34 @@ private suspend fun analyzeCleanerFiles(
     )
 }
 
-private fun hashCleanerFile(context: Context, candidate: CleanerScannableFile): String? {
+private fun hashCleanerFile(
+    context: Context,
+    candidate: CleanerScannableFile,
+    byteLimit: Long
+): Pair<String, Long>? {
     val stream: InputStream = when {
         candidate.file != null -> candidate.file.inputStream()
         candidate.uri != null -> context.contentResolver.openInputStream(candidate.uri) ?: return null
         else -> return null
     }
     val digest = MessageDigest.getInstance("SHA-256")
+    var bytesRead = 0L
+    var exceededLimit = false
     stream.buffered().use { input ->
         val buffer = ByteArray(64 * 1024)
         while (true) {
             val count = input.read(buffer)
             if (count < 0) break
+            if (count.toLong() > byteLimit - bytesRead) {
+                exceededLimit = true
+                break
+            }
+            bytesRead += count
             digest.update(buffer, 0, count)
         }
     }
-    return digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+    if (exceededLimit) return null
+    return digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) } to bytesRead
 }
 
 private fun findCleanerStorageRoots(context: Context): List<File> {
