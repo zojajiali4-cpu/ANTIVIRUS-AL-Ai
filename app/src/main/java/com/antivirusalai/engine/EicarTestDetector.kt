@@ -41,8 +41,8 @@ object EicarTestDetector {
             val end = offset + length
             for (i in offset until end) {
                 val value = buffer[i]
-                while (matched > 0 && value != pattern[matched]) {
-                    matched = prefix[matched - 1]
+                while (matched > 0 && value != EicarTestDetector.pattern[matched]) {
+                    matched = EicarTestDetector.prefix[matched - 1]
                 }
                 if (value == EicarTestDetector.pattern[matched]) matched++
                 if (matched == EicarTestDetector.pattern.size) {
