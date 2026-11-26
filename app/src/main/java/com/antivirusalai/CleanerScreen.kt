@@ -108,6 +108,11 @@ private data class CleanerScannableFile(
     val uri: Uri? = null
 )
 
+private data class CleanerHashResult(
+    val sha256: String?,
+    val bytesRead: Long
+)
+
 private data class CleanerScanResult(
     val filesScanned: Int,
     val directoriesScanned: Int,
@@ -936,16 +941,14 @@ private suspend fun analyzeCleanerFiles(
         for (file in group) {
             currentCoroutineContext().ensureActive()
             val remainingBudget = CLEANER_HASH_BUDGET_BYTES - hashedBytes
-            if (remainingBudget <= 0L || file.size > remainingBudget) continue
-            val hashResult = try {
-                hashCleanerFile(context, file, remainingBudget)
-            } catch (_: Exception) {
-                null
-            }
+            // Keep a small positive margin so a file that grows during hashing
+            // cannot consume the entire budget without a verifiable EOF.
+            if (remainingBudget <= 0L || file.size >= remainingBudget) continue
+            val hashResult = hashCleanerFile(context, file, remainingBudget)
             if (hashResult != null) {
-                val (hash, bytesRead) = hashResult
-                hashedBytes = CleanerPolicy.saturatedAdd(hashedBytes, bytesRead)
-                if (firstByHash.putIfAbsent(hash, file) != null) {
+                hashedBytes = CleanerPolicy.saturatedAdd(hashedBytes, hashResult.bytesRead)
+                val hash = hashResult.sha256
+                if (hash != null && firstByHash.putIfAbsent(hash, file) != null) {
                     addReason(file, CleanerReason.DUPLICATE)
                 }
             }
@@ -967,30 +970,47 @@ private fun hashCleanerFile(
     context: Context,
     candidate: CleanerScannableFile,
     byteLimit: Long
-): Pair<String, Long>? {
-    val stream: InputStream = when {
-        candidate.file != null -> candidate.file.inputStream()
-        candidate.uri != null -> context.contentResolver.openInputStream(candidate.uri) ?: return null
-        else -> return null
+): CleanerHashResult? {
+    val stream: InputStream = try {
+        when {
+            candidate.file != null -> candidate.file.inputStream()
+            candidate.uri != null -> context.contentResolver.openInputStream(candidate.uri) ?: return null
+            else -> return null
+        }
+    } catch (_: Exception) {
+        return null
     }
     val digest = MessageDigest.getInstance("SHA-256")
     var bytesRead = 0L
-    var exceededLimit = false
-    stream.buffered().use { input ->
-        val buffer = ByteArray(64 * 1024)
-        while (true) {
-            val count = input.read(buffer)
-            if (count < 0) break
-            if (count.toLong() > byteLimit - bytesRead) {
-                exceededLimit = true
-                break
+    var reachedEndOfFile = false
+    try {
+        stream.buffered().use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val remaining = byteLimit - bytesRead
+                if (remaining <= 0L) break
+                val readLimit = minOf(buffer.size.toLong(), remaining).toInt()
+                val count = input.read(buffer, 0, readLimit)
+                if (count < 0) {
+                    reachedEndOfFile = true
+                    break
+                }
+                if (count == 0) continue
+                bytesRead += count
+                digest.update(buffer, 0, count)
             }
-            bytesRead += count
-            digest.update(buffer, 0, count)
         }
+    } catch (_: Exception) {
+        // Account for bytes already consumed even when a provider or file fails.
+        return CleanerHashResult(sha256 = null, bytesRead = bytesRead)
     }
-    if (exceededLimit) return null
-    return digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) } to bytesRead
+    if (!reachedEndOfFile) {
+        return CleanerHashResult(sha256 = null, bytesRead = bytesRead)
+    }
+    return CleanerHashResult(
+        sha256 = digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) },
+        bytesRead = bytesRead
+    )
 }
 
 private fun hasCleanerBroadAccess(context: Context): Boolean =
