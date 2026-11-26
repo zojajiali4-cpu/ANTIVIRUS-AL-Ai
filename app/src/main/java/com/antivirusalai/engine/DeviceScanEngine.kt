@@ -264,7 +264,6 @@ object DeviceScanEngine {
             }
 
             if (totalBytes >= totalByteLimit && index < list.lastIndex) {
-                dataLimitReached = true
                 val remaining = list.size - index - 1
                 skipped += remaining
                 failures += FolderScanFailure(
