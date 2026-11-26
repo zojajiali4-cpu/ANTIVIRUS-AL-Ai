@@ -3702,6 +3702,23 @@ private fun IconArt(
                 }
                 line(6f, 21f, 18f, 21f)
             }
+            "clean" -> {
+                // Broom and sparkle mark: immediately recognizable as storage cleanup.
+                line(16.5f, 2.5f, 9f, 15f)
+                path {
+                    moveTo(4f * sx, 14.5f * sy)
+                    lineTo(11f * sx, 18f * sy)
+                    lineTo(8f * sx, 22f * sy)
+                    lineTo(2f * sx, 18f * sy)
+                    close()
+                }
+                line(4f, 18f, 3f, 21f)
+                line(6f, 19f, 5.5f, 22f)
+                line(19f, 4f, 19f, 7f)
+                line(17.5f, 5.5f, 20.5f, 5.5f)
+                line(3f, 4f, 3f, 6f)
+                line(2f, 5f, 4f, 5f)
+            }
             "folder" -> {
                 path {
                     moveTo(2.5f * sx, 6f * sy)
