@@ -159,7 +159,17 @@ object DeviceScanEngine {
                 children.forEach { child ->
                     if (candidates.size >= maxFiles) return@forEach
                     if (child.isDirectory) {
-                        if (!isProtectedDirectory(rootCanonical, child)) queue.add(child to depth + 1)
+                        if (!isProtectedDirectory(rootCanonical, child)) {
+                            if (queue.size < ScanLimits.MAX_PENDING_DIRECTORIES) {
+                                queue.add(child to depth + 1)
+                            } else {
+                                failures += FolderScanFailure(
+                                    child.name,
+                                    "Pending-directory safety limit reached; this part of the tree was not enumerated."
+                                )
+                                traversalLimitReached = true
+                            }
+                        }
                     } else {
                         addCandidate(child, rootCanonical)
                     }
