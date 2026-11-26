@@ -6,7 +6,7 @@ Reviewed: 2026-11-08
 
 | Mode | Maximum files | Maximum total data | Per-file maximum |
 |---|---:|---:|---:|
-| Device quick scan | 350 | 1 GiB | 200 MiB |
+| Device quick scan | 100,000 | 25 GiB | 200 MiB |
 | Device deep scan | 100,000 | 25 GiB | 200 MiB |
 | User-selected SAF folder | 100,000 | 25 GiB | 200 MiB |
 
@@ -15,6 +15,16 @@ Deep-device and user-selected-folder scans are configured to handle libraries of
 Android does not expose other apps' private data. In particular, `Android/data` and `Android/obb` are excluded from shared-storage traversal even when the user grants All files access. The app can inspect only files and installed APK components Android makes readable.
 
 The UI keeps at most 60 result details in memory, prioritizes threat findings when selecting those details, and maintains aggregate scanned/threat/unknown/test counts over the full run. The preview is not a complete per-file audit log.
+
+## Scan throughput work
+
+The scan read path now computes SHA-256, streams the C++ content matcher, and checks the harmless EICAR self-test marker from the same 64 KiB input chunks. The 64 KiB chunk size is intentionally aligned with the native scanner's maximum accepted chunk size.
+
+The scanner no longer writes every ordinary document, image, audio or video file to a temporary file and rereads it for the EICAR check. It materializes a temporary file only when metadata or the first four content bytes indicate an APK/archive/DEX/ELF-like input that needs random-access structural analysis. The temporary file is closed before analysis; it is not fsynced because it is an ephemeral working copy, not durable user data.
+
+Device-wide and selected-folder scans collect unknown-file investigation metadata in memory and persist it in batches of at most 128 cases. This avoids a SharedPreferences JSON read/merge/write for every file. The investigation queue remains capped at 100 unique hashes and stores no paths, names, file bytes, or private content.
+
+These are source-level I/O and persistence optimizations, not a published speed claim. No elapsed-time improvement is claimed until the same controlled corpus is benchmarked on real Android devices. The required benchmark must record total files, total bytes, files/second, MiB/second, elapsed time, battery/thermal state, scanned/skipped totals, and compare the old and optimized commits under the same device conditions.
 
 ## What the current detection engine actually detects
 
