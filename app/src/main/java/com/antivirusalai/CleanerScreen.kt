@@ -229,7 +229,7 @@ private suspend fun scanCleanerTree(context: android.content.Context, rootUri: U
     files.forEach { file ->
         val name = file.name ?: return@forEach
         val ext = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
-        if (ext in tempExtensions) {
+        if (CleanerPolicy.isTemporaryName(name)) {
             candidates[file.uri.toString()] = CleanerItem(file.uri, name, file.length(),
                 "Temporary-file extension")
         }
