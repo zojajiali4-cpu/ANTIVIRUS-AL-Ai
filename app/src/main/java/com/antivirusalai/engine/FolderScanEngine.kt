@@ -131,6 +131,7 @@ data class FolderScanReport(
  * It never walks arbitrary device storage and never installs or executes files.
  */
 object FolderScanEngine {
+    private const val UNKNOWN_CASE_BATCH_SIZE = 128
     const val MAX_FILES = ScanLimits.FOLDER_FILE_LIMIT
     const val MAX_DEPTH = 64
     const val MAX_TOTAL_BYTES = ScanLimits.FOLDER_TOTAL_BYTES
@@ -277,6 +278,16 @@ object FolderScanEngine {
         var unknownCount = 0
         var matchedCount = 0
         val coverage = ScanCoverageAccumulator()
+        val pendingUnknownCases = mutableListOf<UnknownFileCase>()
+
+        fun flushUnknownCases() {
+            if (pendingUnknownCases.isEmpty()) return
+            runCatching {
+                UnknownFileInvestigationStore.recordBatch(context.applicationContext, pendingUnknownCases.toList())
+            }
+            pendingUnknownCases.clear()
+        }
+
         for ((index, candidate) in candidates.withIndex()) {
             currentCoroutineContext().ensureActive()
             if (candidate.declaredSize > ScanEngine.MAX_FILE_SIZE_BYTES) {
@@ -297,7 +308,13 @@ object FolderScanEngine {
                 onProgress(index + 1, candidates.size, candidate.name)
             }
             try {
-                val result = ScanEngine.scan(context.applicationContext, candidate.uri)
+                val result = ScanEngine.scan(
+                    context.applicationContext,
+                    candidate.uri,
+                    persistUnknownCase = false
+                )
+                result.unknownFileCase?.let(pendingUnknownCases::add)
+                if (pendingUnknownCases.size >= UNKNOWN_CASE_BATCH_SIZE) flushUnknownCases()
                 totalBytes += result.sizeBytes
                 scannedCount++
                 coverage.record(result)
@@ -342,6 +359,8 @@ object FolderScanEngine {
                 failures += FolderScanFailure(candidate.name, error.message ?: "File scan failed.")
             }
         }
+
+        flushUnknownCases()
 
         val report = FolderScanReport(
             items = if (findingItems.isNotEmpty()) findingItems else previewItems,
