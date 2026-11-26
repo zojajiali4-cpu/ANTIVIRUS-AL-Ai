@@ -129,6 +129,7 @@ private enum class MainTab(val key: String) {
     HOME("home"),
     SCAN("scan"),
     TOOLS("tools"),
+    CLEANER("cleaner"),
     STORE("store"),
     SETTINGS("settings"),
     VAULT("vault")
@@ -617,7 +618,13 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
                                 protectionEnabled = protectionEnabled,
                                 onToggleProtection = toggleProtection,
                                 onOpenScan = { activeTab = MainTab.SCAN.key },
-                                onOpenVault = { activeTab = MainTab.VAULT.key }
+                                onOpenVault = { activeTab = MainTab.VAULT.key },
+                                onOpenCleaner = { activeTab = MainTab.CLEANER.key }
+                            )
+
+                            MainTab.CLEANER.key -> CleanerScreen(
+                                fa = fa,
+                                onBack = { activeTab = MainTab.TOOLS.key }
                             )
 
                             MainTab.VAULT.key -> QuarantineVaultScreen(
@@ -2878,7 +2885,8 @@ private fun SecurityToolsScreen(
     protectionEnabled: Boolean,
     onToggleProtection: (Boolean) -> Unit,
     onOpenScan: () -> Unit,
-    onOpenVault: () -> Unit
+    onOpenVault: () -> Unit,
+    onOpenCleaner: () -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -3080,6 +3088,14 @@ private fun SecurityToolsScreen(
                 onClick = onOpenScan
             )
         }
+
+        ToolActionTile(
+            modifier = Modifier.fillMaxWidth(),
+            icon = "clean",
+            title = tr(fa, "پاک‌سازی حافظه", "Storage Cleaner"),
+            subtitle = tr(fa, "شناسایی فایل‌های موقت و تکراری با تأیید تو", "Find temporary and duplicate files with your approval"),
+            onClick = onOpenCleaner
+        )
 
         if (result != null) {
             RecentScanCard(fa = fa, result = result, onClick = onOpenScan)
