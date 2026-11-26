@@ -1,6 +1,5 @@
 package com.antivirusalai
 
-import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -127,7 +126,7 @@ private data class CleanerStorageStats(
 fun CleanerScreen(fa: Boolean, onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var hasBroadAccess by remember { mutableStateOf(DeviceScanEngine.hasBroadStorageAccess(context)) }
+    var hasBroadAccess by remember { mutableStateOf(hasCleanerBroadAccess(context)) }
     var selectedTreeUri by remember { mutableStateOf<Uri?>(null) }
     var scanResult by remember { mutableStateOf<CleanerScanResult?>(null) }
     var selectedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -141,24 +140,13 @@ fun CleanerScreen(fa: Boolean, onBack: () -> Unit) {
     val settingsLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
-        hasBroadAccess = DeviceScanEngine.hasBroadStorageAccess(context)
+        hasBroadAccess = hasCleanerBroadAccess(context)
         message = if (hasBroadAccess) {
             cleanerTr(fa, "دسترسی حافظه فعال شد. اکنون می‌توانی حافظهٔ مشترک را بررسی کنی.",
                 "Storage access granted. Shared storage can now be inspected.")
         } else {
             cleanerTr(fa, "دسترسی فعال نشد؛ می‌توانی یک پوشه را جداگانه انتخاب کنی.",
                 "Access was not granted. You can still choose an individual folder.")
-        }
-    }
-
-    val legacyPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        hasBroadAccess = DeviceScanEngine.hasBroadStorageAccess(context)
-        message = if (granted) {
-            cleanerTr(fa, "مجوز خواندن حافظه فعال شد.", "Shared-storage read permission granted.")
-        } else {
-            cleanerTr(fa, "مجوز داده نشد؛ از انتخاب پوشه استفاده کن.", "Permission denied; use the folder picker instead.")
         }
     }
 
@@ -294,8 +282,6 @@ fun CleanerScreen(fa: Boolean, onBack: () -> Unit) {
                                 } catch (_: Exception) {
                                     settingsLauncher.launch(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
                                 }
-                            } else {
-                                legacyPermissionLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
                             }
                         },
                         modifier = Modifier.fillMaxWidth()
@@ -585,7 +571,7 @@ fun CleanerScreen(fa: Boolean, onBack: () -> Unit) {
                         scope.launch {
                             deleting = true
                             val results = withContext(Dispatchers.IO) {
-                                val roots = if (DeviceScanEngine.hasBroadStorageAccess(context))
+                                val roots = if (hasCleanerBroadAccess(context))
                                     findCleanerStorageRoots(context) else emptyList()
                                 chosen.map { item ->
                                     val deleted = when {
@@ -978,7 +964,7 @@ private fun findCleanerStorageRoots(context: Context): List<File> {
 }
 
 private fun deleteSharedStorageFile(context: Context, path: String, roots: List<File>): Boolean {
-    if (!DeviceScanEngine.hasBroadStorageAccess(context)) return false
+    if (!hasCleanerBroadAccess(context)) return false
     val candidate = runCatching { File(path).canonicalFile }.getOrNull() ?: return false
     val allowedRoot = roots.firstOrNull { CleanerPolicy.isWithinRoot(candidate, it) } ?: return false
     val relative = runCatching { candidate.relativeTo(allowedRoot).invariantSeparatorsPath }.getOrNull()
