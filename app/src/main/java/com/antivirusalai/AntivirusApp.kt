@@ -261,9 +261,16 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
 
                 scanCurrent = progressData.getInt(DeviceScanWorker.KEY_CURRENT, scanCurrent)
                 scanTotal = progressData.getInt(DeviceScanWorker.KEY_TOTAL, scanTotal)
-                scanProgress = if (scanTotal > 0) {
+                val scopeComplete = progressData.getBoolean(DeviceScanWorker.KEY_SCOPE_COMPLETE, false)
+                val reportedRatio = if (scanTotal > 0) {
                     (scanCurrent.toFloat() / scanTotal.toFloat()).coerceIn(0f, 1f)
-                } else if (info.state == WorkInfo.State.SUCCEEDED) 1f else 0f
+                } else 0f
+                scanProgress = when {
+                    info.state == WorkInfo.State.SUCCEEDED && scopeComplete -> 1f
+                    info.state == WorkInfo.State.SUCCEEDED -> reportedRatio.coerceAtMost(0.99f)
+                    active -> reportedRatio.coerceAtMost(0.99f)
+                    else -> reportedRatio
+                }
 
                 when (info.state) {
                     WorkInfo.State.ENQUEUED, WorkInfo.State.RUNNING, WorkInfo.State.BLOCKED -> {
@@ -1280,7 +1287,7 @@ private fun DashboardScreen(
                     modifier = Modifier.weight(1f),
                     icon = "file",
                     title = tr(fa, "اسکن سریع", "Quick scan"),
-                    caption = tr(fa, "مسیرهای رایج", "Common locations"),
+                    caption = tr(fa, "محدوده مجاز حافظه", "Accessible storage scope"),
                     onClick = onFileScan
                 )
                 QuickActionCard(
@@ -2218,7 +2225,7 @@ private fun ScanCenterScreen(
         ScanModeCard(
             icon = "file",
             title = tr(fa, "اسکن سریع", "Quick scan"),
-            description = tr(fa, "برنامه‌های نصب‌شده و مسیرهای مهم حافظه بررسی می‌شوند؛ این حالت حداکثر ۳۵۰ فایل و ۱ گیگابایت داده را با سقف ۲۰۰ مگابایت برای هر فایل پوشش می‌دهد.", "Checks installed-app packages and key storage folders, up to 350 files and 1 GB total, with a 200 MB per-file limit."),
+            description = tr(fa, "همه فایل‌های قابل‌فهرست‌برداری در حافظه مشترکِ مجاز و مسیرهای قابل‌خواندن برنامه‌های نصب‌شده پایش می‌شوند؛ مواردی که تحلیل نمی‌شوند جداگانه شمرده خواهند شد.", "Inspects all listable files in permitted shared storage and readable installed-app paths; files that cannot be analyzed are counted separately."),
             tag = tr(fa, "قابل استفاده", "AVAILABLE"),
             enabled = !scanning,
             onClick = onFileScan
@@ -2485,21 +2492,30 @@ private fun BatchScanSummaryCard(
     }
     val visibleItems = importantItems.take(if (showAllResults) 60 else 8)
     val incompleteCoverage = !report.fullScanCoverage ||
+        report.skippedFiles > 0 ||
         report.unaccountedFiles > 0 ||
         report.unknownCount > 0
     Card(shape = RoundedCornerShape(21.dp), colors = CardDefaults.cardColors(containerColor = SurfaceBase)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
             Text(if (deep) tr(fa, "نتیجه اسکن عمیق", "Deep scan results") else tr(fa, "نتیجه اسکن سریع", "Quick scan results"), color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                MetricMini(Modifier.weight(1f), tr(fa, "بررسی‌شده", "Scanned"), report.scannedCount.toString())
-                MetricMini(Modifier.weight(1f), tr(fa, "تهدید مهم", "Priority threats"), report.suspiciousCount.toString())
+                MetricMini(Modifier.weight(1f), tr(fa, "فایل تحلیل‌شده", "Analyzed files"), report.scannedCount.toString())
+                MetricMini(Modifier.weight(1f), tr(fa, "بدافزار شناخته‌شده", "Known malware"), report.knownMalwareCount.toString())
             }
-            Text(tr(fa, "از " + report.discoveredFiles + " مورد قابل بررسی، " + report.scannedCount + " مورد اسکن شدند.", report.scannedCount.toString() + " of " + report.discoveredFiles + " discovered items were scanned."), color = TextSecondary, fontSize = 11.sp)
             Text(
                 tr(
                     fa,
-                    "پوشش اسکن فایل‌های فهرست‌شده: ${report.scanCoveragePercent}% • ردشده: ${report.skippedFiles} • بدون وضعیت نهایی: ${report.unaccountedFiles}",
-                    "Scan coverage of enumerated files: ${report.scanCoveragePercent}% • skipped: ${report.skippedFiles} • without final disposition: ${report.unaccountedFiles}"
+                    "از ${report.discoveredFiles} فایل فهرست‌شده، ${report.scannedCount} فایل تحلیل شد و ${report.skippedFiles} فایل تحلیل‌نشده ثبت شد.",
+                    "Of ${report.discoveredFiles} listed files, ${report.scannedCount} were analyzed and ${report.skippedFiles} were recorded as not analyzed."
+                ),
+                color = TextSecondary,
+                fontSize = 11.sp
+            )
+            Text(
+                tr(
+                    fa,
+                    "پیشرفت پایش محدوده مجاز: ${report.completionPercent}% • تحلیل موفق: ${report.scanCoveragePercent}% • تهدید/مشکوک: ${report.suspiciousCount} • نامشخص: ${report.unknownCount}",
+                    "Accessible-scope completion: ${report.completionPercent}% • successfully analyzed: ${report.scanCoveragePercent}% • threat/review findings: ${report.suspiciousCount} • unknown: ${report.unknownCount}"
                 ),
                 color = if (report.fullScanCoverage) ColorSuccess else ColorWarning,
                 fontSize = 11.sp,
@@ -2509,11 +2525,33 @@ private fun BatchScanSummaryCard(
                 Text(
                     tr(
                         fa,
-                        "این اسکن پوشش کامل محدوده قابل‌دسترسی را تأیید نمی‌کند. موارد مسدود، ردشده یا پوشه‌های پیمایش‌نشده باید جداگانه بررسی شوند.",
-                        "This scan cannot confirm full coverage of the accessible scope. Blocked, skipped, or untraversed items need separate review."
+                        "پیمایش تمام محدوده قابل‌دسترسی کامل نشد؛ ممکن است مسیرهایی به‌علت محدودیت Android یا سقف ایمنی فهرست نشده باشند. این نتیجه ۱۰۰٪ کامل نیست.",
+                        "The accessible scope was not fully enumerated. Android restrictions or a traversal safety limit may have left paths unlisted; this is not a 100% complete scan."
                     ),
                     color = ColorWarning,
                     fontSize = 10.sp
+                )
+            } else if (report.skippedFiles > 0) {
+                Text(
+                    tr(
+                        fa,
+                        "${report.skippedFiles} فایل پیدا شد اما تحلیل نشد؛ آن‌ها در شمارش نهایی لحاظ شده‌اند و دلیل هر مورد در جزئیات گزارش آمده است.",
+                        "${report.skippedFiles} discovered file(s) were not analyzed; they are included in the final count and their reasons appear in the report details."
+                    ),
+                    color = ColorWarning,
+                    fontSize = 10.sp
+                )
+            }
+            if (report.suspiciousCount > 0 || report.knownMalwareCount > 0) {
+                Text(
+                    tr(
+                        fa,
+                        "نتیجه این نوبت: ${report.knownMalwareCount} بدافزار شناخته‌شده • ${report.suspiciousCount} مورد تهدید یا مشکوک • ${report.skippedFiles} فایل تحلیل‌نشده",
+                        "This run: ${report.knownMalwareCount} known malware • ${report.suspiciousCount} threat/review findings • ${report.skippedFiles} not analyzed"
+                    ),
+                    color = if (report.knownMalwareCount > 0) ColorDanger else ColorWarning,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold
                 )
             }
             if (report.suspiciousCount == 0) {
@@ -2576,8 +2614,16 @@ private fun BatchScanSummaryCard(
                     report.failures.take(30).forEach { failure -> Text(failure.name + ": " + failure.reason, color = TextSecondary, fontSize = 10.sp) }
                 }
             }
-            if (report.truncated || report.skippedFiles > 0) {
-                Text(tr(fa, "محدودیت ایمنی اسکن اعمال شد. موارد ردشده: " + report.skippedFiles, "Safety scan limits were applied. Skipped: " + report.skippedFiles), color = ColorWarning, fontSize = 10.sp)
+            if (report.truncated) {
+                Text(
+                    tr(
+                        fa,
+                        "محدودیت پیمایش اعمال شد؛ ممکن است مسیرهایی در این محدوده هنوز فهرست نشده باشند.",
+                        "A traversal limit was reached; some paths in this scope may not have been listed."
+                    ),
+                    color = ColorWarning,
+                    fontSize = 10.sp
+                )
             }
         }
     }
