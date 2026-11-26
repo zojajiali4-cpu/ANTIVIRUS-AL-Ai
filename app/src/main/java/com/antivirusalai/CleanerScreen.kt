@@ -176,6 +176,15 @@ fun CleanerScreen(fa: Boolean, onBack: () -> Unit) {
     val selectedBytes = scanResult?.candidates
         ?.filter { selectedIds.contains(it.id) }
         ?.fold(0L) { total, item -> CleanerPolicy.saturatedAdd(total, item.size) } ?: 0L
+    val safeBulkSelectionIds = scanResult?.candidates
+        ?.filter { item ->
+            (CleanerReason.TEMPORARY in item.reasons || CleanerReason.DUPLICATE in item.reasons) &&
+                CleanerReason.LARGE !in item.reasons &&
+                CleanerReason.REVIEW !in item.reasons
+        }
+        ?.map { it.id }
+        ?.toSet()
+        ?: emptySet()
     val storageStats = remember(hasBroadAccess) {
         if (hasBroadAccess) readCleanerStorageStats() else null
     }
@@ -497,14 +506,21 @@ fun CleanerScreen(fa: Boolean, onBack: () -> Unit) {
                         cleanerTr(fa, "موارد قابل بازبینی", "Review candidates"),
                         color = CleanerTextPrimary, fontWeight = FontWeight.Bold
                     )
-                    TextButton(onClick = {
-                        selectedIds = if (selectedIds.size == result.candidates.size) emptySet()
-                        else result.candidates.map { it.id }.toSet()
-                    }) {
+                    TextButton(
+                        enabled = safeBulkSelectionIds.isNotEmpty(),
+                        onClick = {
+                            val allSafeItemsSelected = selectedIds.containsAll(safeBulkSelectionIds)
+                            selectedIds = if (allSafeItemsSelected) {
+                                selectedIds - safeBulkSelectionIds
+                            } else {
+                                selectedIds + safeBulkSelectionIds
+                            }
+                        }
+                    ) {
                         Text(
-                            if (selectedIds.size == result.candidates.size)
-                                cleanerTr(fa, "لغو انتخاب همه", "Clear selection")
-                            else cleanerTr(fa, "انتخاب همه", "Select all"),
+                            if (selectedIds.containsAll(safeBulkSelectionIds) && safeBulkSelectionIds.isNotEmpty())
+                                cleanerTr(fa, "لغو انتخاب موقت و تکراری‌ها", "Clear temporary and duplicate selection")
+                            else cleanerTr(fa, "انتخاب موقت و تکراری‌ها", "Select temporary and duplicate files"),
                             color = CleanerAccent, fontSize = 11.sp
                         )
                     }
@@ -574,11 +590,23 @@ fun CleanerScreen(fa: Boolean, onBack: () -> Unit) {
             onDismissRequest = { showDeleteConfirmation = false },
             title = { Text(cleanerTr(fa, "تأیید نهایی حذف", "Confirm file deletion")) },
             text = {
-                Text(
-                    cleanerTr(fa,
-                        "${chosen.size} فایل با حجم تقریبی ${formatCleanerBytes(selectedBytes)} حذف شود؟ این کار قابل بازگشت نیست. فایل‌های سیستمی و داده‌های خصوصی سایر برنامه‌ها در این فهرست قرار نمی‌گیرند.",
-                        "Delete ${chosen.size} files totaling about ${formatCleanerBytes(selectedBytes)}? This cannot be undone. System files and other apps' private data are not included.")
-                )
+                val largeCount = chosen.count { CleanerReason.LARGE in it.reasons }
+                val reviewCount = chosen.count { CleanerReason.REVIEW in it.reasons }
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        cleanerTr(fa,
+                            "${chosen.size} فایل با حجم تقریبی ${formatCleanerBytes(selectedBytes)} حذف شود؟ این کار قابل بازگشت نیست. فایل‌های سیستمی و داده‌های خصوصی سایر برنامه‌ها در این فهرست قرار نمی‌گیرند.",
+                            "Delete ${chosen.size} files totaling about ${formatCleanerBytes(selectedBytes)}? This cannot be undone. System files and other apps' private data are not included.")
+                    )
+                    if (largeCount > 0 || reviewCount > 0) {
+                        Text(
+                            cleanerTr(fa,
+                                "توجه: انتخاب تو شامل ${largeCount} فایل حجیم و ${reviewCount} فایل نیازمند بررسی دستی است. پیش از ادامه، نام و مسیر این موارد را دوباره بررسی کن.",
+                                "Caution: your selection includes ${largeCount} large files and ${reviewCount} manual-review files. Check their names and locations before continuing."),
+                            color = CleanerWarning
+                        )
+                    }
+                }
             },
             confirmButton = {
                 TextButton(
