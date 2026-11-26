@@ -19,6 +19,7 @@ import java.io.File
  * MANAGE_EXTERNAL_STORAGE in system settings.
  */
 object DeviceScanEngine {
+    private const val UNKNOWN_CASE_BATCH_SIZE = 128
     private const val QUICK_FILE_LIMIT = ScanLimits.QUICK_FILE_LIMIT
     private const val QUICK_TOTAL_BYTES = ScanLimits.QUICK_TOTAL_BYTES
     private const val DEEP_FILE_LIMIT = ScanLimits.DEEP_FILE_LIMIT
@@ -198,6 +199,15 @@ object DeviceScanEngine {
         val discoveredFiles = list.size + discoverySkipped
         val totalByteLimit = if (deep) DEEP_TOTAL_BYTES else QUICK_TOTAL_BYTES
         var budgetExhausted = false
+        val pendingUnknownCases = mutableListOf<UnknownFileCase>()
+
+        fun flushUnknownCases() {
+            if (pendingUnknownCases.isEmpty()) return
+            runCatching {
+                UnknownFileInvestigationStore.recordBatch(context.applicationContext, pendingUnknownCases.toList())
+            }
+            pendingUnknownCases.clear()
+        }
 
         for ((index, file) in list.withIndex()) {
             currentCoroutineContext().ensureActive()
@@ -218,7 +228,13 @@ object DeviceScanEngine {
                 if (totalBytes >= totalByteLimit) budgetExhausted = true
             } else {
                 try {
-                    val result = ScanEngine.scan(context.applicationContext, Uri.fromFile(file))
+                    val result = ScanEngine.scan(
+                        context.applicationContext,
+                        Uri.fromFile(file),
+                        persistUnknownCase = false
+                    )
+                    result.unknownFileCase?.let(pendingUnknownCases::add)
+                    if (pendingUnknownCases.size >= UNKNOWN_CASE_BATCH_SIZE) flushUnknownCases()
                     totalBytes += result.sizeBytes
                     scannedCount++
                     coverage.record(result)
@@ -274,6 +290,8 @@ object DeviceScanEngine {
                 break
             }
         }
+
+        flushUnknownCases()
 
         // A per-file or aggregate analysis limit is disclosed as not-scanned data,
         // not mistaken for a missing directory listing. Traversal gaps are different.
