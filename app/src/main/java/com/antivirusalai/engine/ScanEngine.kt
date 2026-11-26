@@ -21,7 +21,11 @@ class ScanTooLargeException(message: String) : Exception(message)
 object ScanEngine {
     const val MAX_FILE_SIZE_BYTES = 200L * 1024L * 1024L
 
-    suspend fun scan(context: Context, uri: Uri): ScanResult = withContext(Dispatchers.IO) {
+    suspend fun scan(
+        context: Context,
+        uri: Uri,
+        persistUnknownCase: Boolean = true
+    ): ScanResult = withContext(Dispatchers.IO) {
         val resolver = context.contentResolver
         val localFile = if (uri.scheme == "file") uri.path?.let(::File) else null
         val metadata = if (localFile != null) {
@@ -49,7 +53,15 @@ object ScanEngine {
         }
 
         val mimeType = resolver.getType(uri)
-        val temp = File.createTempFile("alai-scan-", ".bin", context.cacheDir)
+        val captureByMetadata = listOf(".apk", ".zip", ".jar", ".aab", ".apks", ".xapk", ".dex", ".so", ".elf")
+            .any { displayName.endsWith(it, ignoreCase = true) } ||
+            mimeType == "application/vnd.android.package-archive"
+        var temp: File? = null
+        var tempSink: FileOutputStream? = null
+        val headerPrefix = ByteArray(4)
+        var headerPrefixSize = 0
+        var headerDecisionMade = captureByMetadata
+        val eicarMatcher = EicarTestDetector.StreamingMatcher()
         val digest = MessageDigest.getInstance("SHA-256")
         var totalBytes = 0L
         val startedAt = System.nanoTime()
@@ -67,40 +79,76 @@ object ScanEngine {
         var nativeMatches = emptySet<String>()
 
         try {
+            if (captureByMetadata) {
+                temp = File.createTempFile("alai-scan-", ".bin", context.cacheDir)
+                tempSink = FileOutputStream(temp!!)
+            }
             val input = resolver.openInputStream(uri)
                 ?: throw IllegalStateException("Android could not open the selected file.")
             input.use { source ->
-                FileOutputStream(temp).use { sink ->
-                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                    while (true) {
-                        currentCoroutineContext().ensureActive()
-                        val count = source.read(buffer)
-                        if (count < 0) break
-                        totalBytes += count
-                        if (totalBytes > MAX_FILE_SIZE_BYTES) {
-                            throw ScanTooLargeException("File exceeds the 200 MB MVP scan limit.")
+                // The native scanner accepts chunks up to 64 KiB. Matching that
+                // boundary reduces read/JNI calls without exceeding its contract.
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    currentCoroutineContext().ensureActive()
+                    val count = source.read(buffer)
+                    if (count < 0) break
+                    if (count == 0) continue
+                    totalBytes += count
+                    if (totalBytes > MAX_FILE_SIZE_BYTES) {
+                        throw ScanTooLargeException("File exceeds the 200 MB MVP scan limit.")
+                    }
+                    digest.update(buffer, 0, count)
+                    eicarMatcher.update(buffer, 0, count)
+                    if (nativeSession != null && contentEngineErrorCode == null) {
+                        try {
+                            nativeSession?.update(buffer, count)
+                        } catch (_: Exception) {
+                            runCatching { nativeSession?.close() }
+                            nativeSession = null
+                            contentEngineState = ContentEngineState.INCOMPLETE
+                            contentEngineErrorCode = "NATIVE_UPDATE_FAILED"
+                        } catch (_: LinkageError) {
+                            runCatching { nativeSession?.close() }
+                            nativeSession = null
+                            contentEngineState = ContentEngineState.INCOMPLETE
+                            contentEngineErrorCode = "NATIVE_LINKAGE_FAILED"
                         }
-                        digest.update(buffer, 0, count)
-                        if (nativeSession != null && contentEngineErrorCode == null) {
-                            try {
-                                nativeSession?.update(buffer, count)
-                            } catch (_: Exception) {
-                                runCatching { nativeSession?.close() }
-                                nativeSession = null
-                                contentEngineState = ContentEngineState.INCOMPLETE
-                                contentEngineErrorCode = "NATIVE_UPDATE_FAILED"
-                            } catch (_: LinkageError) {
-                                runCatching { nativeSession?.close() }
-                                nativeSession = null
-                                contentEngineState = ContentEngineState.INCOMPLETE
-                                contentEngineErrorCode = "NATIVE_LINKAGE_FAILED"
+                    }
+
+                    val sink = tempSink
+                    if (sink != null) {
+                        sink.write(buffer, 0, count)
+                    } else if (!headerDecisionMade) {
+                        val prefixBytesFromChunk = minOf(4 - headerPrefixSize, count)
+                        System.arraycopy(buffer, 0, headerPrefix, headerPrefixSize, prefixBytesFromChunk)
+                        headerPrefixSize += prefixBytesFromChunk
+                        if (headerPrefixSize == headerPrefix.size) {
+                            headerDecisionMade = true
+                            val zipContainer = headerPrefix[0] == 'P'.code.toByte() &&
+                                headerPrefix[1] == 'K'.code.toByte()
+                            val elfBinary = headerPrefix[0] == 0x7f.toByte() &&
+                                headerPrefix[1] == 'E'.code.toByte() &&
+                                headerPrefix[2] == 'L'.code.toByte() &&
+                                headerPrefix[3] == 'F'.code.toByte()
+                            if (zipContainer || elfBinary) {
+                                temp = File.createTempFile("alai-scan-", ".bin", context.cacheDir)
+                                tempSink = FileOutputStream(temp!!)
+                                tempSink!!.write(headerPrefix)
+                                if (count > prefixBytesFromChunk) {
+                                    tempSink!!.write(
+                                        buffer,
+                                        prefixBytesFromChunk,
+                                        count - prefixBytesFromChunk
+                                    )
+                                }
                             }
                         }
-                        sink.write(buffer, 0, count)
                     }
-                    sink.fd.sync()
                 }
             }
+            tempSink?.close()
+            tempSink = null
 
             if (nativeSession != null && contentEngineErrorCode == null) {
                 try {
@@ -192,7 +240,7 @@ object ScanEngine {
             val localMatch = localReputationStage.value
 
             val eicarStage = ScanStageRunner.execute("EICAR_SELF_TEST") {
-                EicarTestDetector.contains(temp)
+                eicarMatcher.found
             }
             ScanStageRunner.failureEvidence(eicarStage)?.let(evidence::add)
             val eicarMatch = eicarStage.value == true
@@ -244,17 +292,29 @@ object ScanEngine {
                 )
             }
 
-            val looksLikeApk = ApkFileDetector.isApkArchive(temp) ||
+            val looksLikeApk = temp?.let(ApkFileDetector::isApkArchive) == true ||
                 displayName.endsWith(".apk", ignoreCase = true) ||
                 mimeType == "application/vnd.android.package-archive"
             val apkStage = ScanStageRunner.execute("APK_METADATA_ANALYSIS") {
-                if (looksLikeApk) ApkMetadataInspector.inspect(context, temp) else null
+                if (looksLikeApk && temp != null) ApkMetadataInspector.inspect(context, temp!!) else null
             }
             ScanStageRunner.failureEvidence(apkStage)?.let(evidence::add)
             val apk = apkStage.value
 
             val staticStage = ScanStageRunner.execute("FORMAT_STATIC_ANALYSIS") {
-                FormatStaticAnalyzer.analyze(temp)
+                // Ordinary documents/media are inspected in the streaming pass.
+                // Materialize only APK/ZIP/ELF-like inputs that need random-access
+                // structural parsing; do not write and reread every file.
+                temp?.let(FormatStaticAnalyzer::analyze) ?: StaticAnalysisReport(
+                    format = null,
+                    supported = false,
+                    complete = true,
+                    entryCount = 0,
+                    expandedBytes = 0L,
+                    evidence = emptyList(),
+                    signalCategories = emptySet(),
+                    riskPoints = 0
+                )
             }
             ScanStageRunner.failureEvidence(staticStage)?.let(evidence::add)
             val staticReport = staticStage.value ?: StaticAnalysisReport(
@@ -486,16 +546,19 @@ object ScanEngine {
             )
             val unknownCase = UnknownFileInvestigator.createCase(baseResult)
             if (unknownCase != null) {
-                runCatching {
-                    UnknownFileInvestigationStore.record(context.applicationContext, unknownCase)
+                if (persistUnknownCase) {
+                    runCatching {
+                        UnknownFileInvestigationStore.record(context.applicationContext, unknownCase)
+                    }
                 }
                 baseResult.copy(unknownFileCase = unknownCase)
             } else {
                 baseResult
             }
         } finally {
+            runCatching { tempSink?.close() }
             runCatching { nativeSession?.close() }
-            temp.delete()
+            temp?.delete()
         }
     }
 }
