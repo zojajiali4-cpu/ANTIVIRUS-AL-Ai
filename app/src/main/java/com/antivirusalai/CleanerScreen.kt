@@ -426,7 +426,7 @@ fun CleanerScreen(fa: Boolean, onBack: () -> Unit) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         CleanerMetric(
                             Modifier.weight(1f),
-                            cleanerTr(fa, "فایل بررسی‌شده", "Files inspected"),
+                            cleanerTr(fa, "فایل فهرست‌شده", "Files indexed"),
                             result.filesScanned.toString()
                         )
                         CleanerMetric(
@@ -438,7 +438,7 @@ fun CleanerScreen(fa: Boolean, onBack: () -> Unit) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         CleanerMetric(
                             Modifier.weight(1f),
-                            cleanerTr(fa, "حجم فایل‌ها", "Inspected size"),
+                            cleanerTr(fa, "حجم کل فایل‌ها", "Total listed size"),
                             formatCleanerBytes(result.totalBytes)
                         )
                         CleanerMetric(
