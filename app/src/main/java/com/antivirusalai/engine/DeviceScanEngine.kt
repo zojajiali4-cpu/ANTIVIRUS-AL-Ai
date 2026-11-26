@@ -53,7 +53,6 @@ object DeviceScanEngine {
         val candidates = linkedMapOf<String, File>()
         val maxFiles = if (deep) DEEP_FILE_LIMIT else QUICK_FILE_LIMIT
         var traversalLimitReached = !hasStorageAccess
-        var dataLimitReached = false
         var discoverySkipped = 0
 
         fun addCandidate(file: File, allowedRoot: File) {
@@ -200,7 +199,6 @@ object DeviceScanEngine {
                 skipped++
                 failures += FolderScanFailure(file.name, "File exceeds the 200 MB per-file analysis limit.")
             } else if (declaredSize > 0 && declaredSize > totalByteLimit - totalBytes) {
-                dataLimitReached = true
                 skipped++
                 failures += FolderScanFailure(
                     file.name,
@@ -343,7 +341,9 @@ object DeviceScanEngine {
                 "Installed app inventory",
                 "Installed-app inspection was skipped because the user has not granted in-app consent. Shared-storage scanning may continue independently."
             )
-            return PackageDiscoveryResult(skippedComponents = 0, incomplete = true)
+            // Without explicit app-inventory consent, installed APKs are outside
+            // the authorized scan scope; shared-storage scanning may still finish.
+            return PackageDiscoveryResult(skippedComponents = 0, incomplete = false)
         }
 
         val pm = context.packageManager
