@@ -947,6 +947,10 @@ private fun hashCleanerFile(
     return digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) } to bytesRead
 }
 
+private fun hasCleanerBroadAccess(context: Context): Boolean =
+    Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+        DeviceScanEngine.hasBroadStorageAccess(context)
+
 private fun findCleanerStorageRoots(context: Context): List<File> {
     val roots = LinkedHashMap<String, File>()
     val candidates = ArrayList<File>()
