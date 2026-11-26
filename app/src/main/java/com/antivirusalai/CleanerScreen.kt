@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
@@ -38,6 +39,14 @@ import java.io.File
 import java.security.MessageDigest
 import java.util.ArrayDeque
 import java.util.Locale
+
+private val CleanerTextPrimary = androidx.compose.ui.graphics.Color(0xFFF3F7FC)
+private val CleanerTextSecondary = androidx.compose.ui.graphics.Color(0xFFB9ADC9)
+private val CleanerSurface = androidx.compose.ui.graphics.Color(0xFF211437)
+private val CleanerSuccess = androidx.compose.ui.graphics.Color(0xFF58D99A)
+private val CleanerWarning = androidx.compose.ui.graphics.Color(0xFFF2C66D)
+
+private fun cleanerTr(fa: Boolean, persian: String, english: String) = if (fa) persian else english
 
 private data class CleanerItem(
     val uri: Uri,
@@ -72,26 +81,26 @@ fun CleanerScreen(fa: Boolean, onBack: () -> Unit) {
             treeUri = uri
             items = emptyList()
             selected = emptySet()
-            message = tr(fa, "پوشه انتخاب شد. برای بررسی، اسکن را شروع کن.", "Folder selected. Start the scan to inspect it.")
+            message = cleanerTr(fa, "پوشه انتخاب شد. برای بررسی، اسکن را شروع کن.", "Folder selected. Start the scan to inspect it.")
         }
     }
 
     val selectedBytes = items.filter { selected.contains(it.uri.toString()) }.sumOf { it.size }
 
     Column(verticalArrangement = Arrangement.spacedBy(13.dp)) {
-        Text(tr(fa, "پاک‌سازی حافظه", "Storage Cleaner"), color = TextPrimary, fontSize = 24.sp)
+        Text(cleanerTr(fa, "پاک‌سازی حافظه", "Storage Cleaner"), color = CleanerTextPrimary, fontSize = 24.sp)
         Text(
-            tr(fa, "فقط فایل‌های داخل پوشه‌ای که خودت انتخاب می‌کنی بررسی می‌شوند. هیچ فایلی بدون تأیید تو حذف نمی‌شود.",
+            cleanerTr(fa, "فقط فایل‌های داخل پوشه‌ای که خودت انتخاب می‌کنی بررسی می‌شوند. هیچ فایلی بدون تأیید تو حذف نمی‌شود.",
                 "Only files inside a folder you choose are inspected. Nothing is deleted without your confirmation."),
-            color = TextSecondary, fontSize = 12.sp
+            color = CleanerTextSecondary, fontSize = 12.sp
         )
 
-        Card(colors = CardDefaults.cardColors(containerColor = SurfaceRaised)) {
+        Card(colors = CardDefaults.cardColors(containerColor = CleanerSurface)) {
             Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                Text(tr(fa, "حافظه موقت ANTIVIRUS AL AI", "ANTIVIRUS AL AI temporary cache"), color = TextPrimary)
-                Text(tr(fa, "فقط فایل‌های موقت خود برنامه پاک می‌شوند؛ تنظیمات، قرنطینه و گزارش‌های اسکن دست‌نخورده می‌مانند.",
+                Text(cleanerTr(fa, "حافظه موقت ANTIVIRUS AL AI", "ANTIVIRUS AL AI temporary cache"), color = CleanerTextPrimary)
+                Text(cleanerTr(fa, "فقط فایل‌های موقت خود برنامه پاک می‌شوند؛ تنظیمات، قرنطینه و گزارش‌های اسکن دست‌نخورده می‌مانند.",
                     "Only this app's temporary cache is cleared; settings, quarantine and scan reports are preserved."),
-                    color = TextSecondary, fontSize = 11.sp)
+                    color = CleanerTextSecondary, fontSize = 11.sp)
                 Button(
                     onClick = {
                         scope.launch {
@@ -103,27 +112,27 @@ fun CleanerScreen(fa: Boolean, onBack: () -> Unit) {
                                     before
                                 }
                             }
-                            message = tr(fa, "پاک‌سازی حافظه موقت برنامه انجام شد.", "App temporary cache cleared.")
+                            message = cleanerTr(fa, "پاک‌سازی حافظه موقت برنامه انجام شد.", "App temporary cache cleared.")
                         }
                     },
                     modifier = Modifier.fillMaxWidth()
-                ) { Text(tr(fa, "پاک‌سازی Cache برنامه", "Clear app cache")) }
+                ) { Text(cleanerTr(fa, "پاک‌سازی Cache برنامه", "Clear app cache")) }
                 cacheBytes?.let {
-                    Text(tr(fa, "حجم پاک‌شده: ${formatCleanerBytes(it)}", "Cleared: ${formatCleanerBytes(it)}"),
-                        color = ColorSuccess, fontSize = 12.sp)
+                    Text(cleanerTr(fa, "حجم پاک‌شده: ${formatCleanerBytes(it)}", "Cleared: ${formatCleanerBytes(it)}"),
+                        color = CleanerSuccess, fontSize = 12.sp)
                 }
             }
         }
 
-        Card(colors = CardDefaults.cardColors(containerColor = SurfaceRaised)) {
+        Card(colors = CardDefaults.cardColors(containerColor = CleanerSurface)) {
             Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                Text(tr(fa, "بررسی پوشه انتخابی", "Inspect a selected folder"), color = TextPrimary)
+                Text(cleanerTr(fa, "بررسی پوشه انتخابی", "Inspect a selected folder"), color = CleanerTextPrimary)
                 Text(
-                    treeUri?.lastPathSegment ?: tr(fa, "هنوز پوشه‌ای انتخاب نشده است.", "No folder selected yet."),
-                    color = TextSecondary, fontSize = 11.sp
+                    treeUri?.lastPathSegment ?: cleanerTr(fa, "هنوز پوشه‌ای انتخاب نشده است.", "No folder selected yet."),
+                    color = CleanerTextSecondary, fontSize = 11.sp
                 )
                 OutlinedButton(onClick = { folderPicker.launch(null) }, modifier = Modifier.fillMaxWidth()) {
-                    Text(tr(fa, "انتخاب پوشه", "Choose folder"))
+                    Text(cleanerTr(fa, "انتخاب پوشه", "Choose folder"))
                 }
                 Button(
                     enabled = treeUri != null && !scanning,
@@ -136,20 +145,20 @@ fun CleanerScreen(fa: Boolean, onBack: () -> Unit) {
                             items = result
                             selected = result.map { it.uri.toString() }.toSet()
                             scanning = false
-                            message = tr(fa, "بررسی تمام شد؛ موارد پیشنهادی را بازبینی کن.", "Inspection complete; review the suggested items.")
+                            message = cleanerTr(fa, "بررسی تمام شد؛ موارد پیشنهادی را بازبینی کن.", "Inspection complete; review the suggested items.")
                         }
                     },
                     modifier = Modifier.fillMaxWidth()
-                ) { Text(if (scanning) tr(fa, "در حال بررسی…", "Scanning…") else tr(fa, "اسکن فایل‌های اضافی و تکراری", "Scan temporary and duplicate files")) }
+                ) { Text(if (scanning) cleanerTr(fa, "در حال بررسی…", "Scanning…") else cleanerTr(fa, "اسکن فایل‌های اضافی و تکراری", "Scan temporary and duplicate files")) }
             }
         }
 
         if (items.isNotEmpty()) {
-            Text(tr(fa, "${items.size} مورد پیشنهادی · ${formatCleanerBytes(items.sumOf { it.size })}",
+            Text(cleanerTr(fa, "${items.size} مورد پیشنهادی · ${formatCleanerBytes(items.sumOf { it.size })}",
                 "${items.size} suggested items · ${formatCleanerBytes(items.sumOf { it.size })}"),
-                color = ColorWarning, fontSize = 13.sp)
-            Text(tr(fa, "موارد انتخاب‌شده: ${formatCleanerBytes(selectedBytes)}", "Selected: ${formatCleanerBytes(selectedBytes)}"),
-                color = TextSecondary, fontSize = 12.sp)
+                color = CleanerWarning, fontSize = 13.sp)
+            Text(cleanerTr(fa, "موارد انتخاب‌شده: ${formatCleanerBytes(selectedBytes)}", "Selected: ${formatCleanerBytes(selectedBytes)}"),
+                color = CleanerTextSecondary, fontSize = 12.sp)
             LazyColumn(verticalArrangement = Arrangement.spacedBy(7.dp)) {
                 items(items, key = { it.uri.toString() }) { item ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -160,8 +169,8 @@ fun CleanerScreen(fa: Boolean, onBack: () -> Unit) {
                             }
                         )
                         Column(Modifier.weight(1f)) {
-                            Text(item.name, color = TextPrimary, fontSize = 12.sp)
-                            Text("${item.reason} · ${formatCleanerBytes(item.size)}", color = TextSecondary, fontSize = 10.sp)
+                            Text(item.name, color = CleanerTextPrimary, fontSize = 12.sp)
+                            Text("${item.reason} · ${formatCleanerBytes(item.size)}", color = CleanerTextSecondary, fontSize = 10.sp)
                         }
                     }
                 }
@@ -170,20 +179,20 @@ fun CleanerScreen(fa: Boolean, onBack: () -> Unit) {
                 enabled = selected.isNotEmpty() && !deleting,
                 onClick = { showDeleteConfirm = true },
                 modifier = Modifier.fillMaxWidth()
-            ) { Text(tr(fa, "حذف موارد انتخاب‌شده", "Delete selected items")) }
+            ) { Text(cleanerTr(fa, "حذف موارد انتخاب‌شده", "Delete selected items")) }
         }
 
-        message?.let { Text(it, color = TextSecondary, fontSize = 11.sp) }
+        message?.let { Text(it, color = CleanerTextSecondary, fontSize = 11.sp) }
         TextButton(onClick = onBack, modifier = Modifier.align(Alignment.End)) {
-            Text(tr(fa, "بازگشت", "Back"))
+            Text(cleanerTr(fa, "بازگشت", "Back"))
         }
     }
 
     if (showDeleteConfirm) {
         AlertDialog(
             onDismissRequest = { showDeleteConfirm = false },
-            title = { Text(tr(fa, "تأیید حذف", "Confirm deletion")) },
-            text = { Text(tr(fa, "تعداد ${selected.size} فایل با حجم ${formatCleanerBytes(selectedBytes)} حذف شود؟ این کار قابل بازگشت نیست.",
+            title = { Text(cleanerTr(fa, "تأیید حذف", "Confirm deletion")) },
+            text = { Text(cleanerTr(fa, "تعداد ${selected.size} فایل با حجم ${formatCleanerBytes(selectedBytes)} حذف شود؟ این کار قابل بازگشت نیست.",
                 "Delete ${selected.size} files totaling ${formatCleanerBytes(selectedBytes)}? This cannot be undone.")) },
             confirmButton = {
                 TextButton(onClick = {
@@ -197,11 +206,11 @@ fun CleanerScreen(fa: Boolean, onBack: () -> Unit) {
                         items = items.filterNot { selected.contains(it.uri.toString()) }
                         selected = emptySet()
                         deleting = false
-                        message = tr(fa, "$deleted فایل با موفقیت حذف شد.", "$deleted files deleted successfully.")
+                        message = cleanerTr(fa, "$deleted فایل با موفقیت حذف شد.", "$deleted files deleted successfully.")
                     }
-                }) { Text(tr(fa, "حذف", "Delete")) }
+                }) { Text(cleanerTr(fa, "حذف", "Delete")) }
             },
-            dismissButton = { TextButton(onClick = { showDeleteConfirm = false }) { Text(tr(fa, "انصراف", "Cancel")) } }
+            dismissButton = { TextButton(onClick = { showDeleteConfirm = false }) { Text(cleanerTr(fa, "انصراف", "Cancel")) } }
         )
     }
 }
@@ -224,7 +233,6 @@ private suspend fun scanCleanerTree(context: android.content.Context, rootUri: U
         }
     }
 
-    val tempExtensions = setOf("tmp", "temp", "log", "bak", "old", "part", "crdownload", "cache")
     val candidates = LinkedHashMap<String, CleanerItem>()
     files.forEach { file ->
         val name = file.name ?: return@forEach
@@ -243,17 +251,21 @@ private suspend fun scanCleanerTree(context: android.content.Context, rootUri: U
             if (hashedBytes >= 256L * 1024L * 1024L) break
             val digest = runCatching {
                 val md = MessageDigest.getInstance("SHA-256")
+                var exceededBudget = false
                 context.contentResolver.openInputStream(file.uri)?.use { input ->
                     val buffer = ByteArray(64 * 1024)
                     while (true) {
                         val count = input.read(buffer)
                         if (count < 0) break
                         hashedBytes += count
-                        if (hashedBytes > 256L * 1024L * 1024L) break
+                        if (hashedBytes > 256L * 1024L * 1024L) {
+                            exceededBudget = true
+                            break
+                        }
                         md.update(buffer, 0, count)
                     }
                 } ?: return@runCatching null
-                md.digest().joinToString("") { "%02x".format(it) }
+                if (exceededBudget) null else md.digest().joinToString("") { "%02x".format(it) }
             }.getOrNull()
             if (digest != null) {
                 val previous = hashes.putIfAbsent(digest, file)
