@@ -1,6 +1,6 @@
 # Scanning coverage and known limitations
 
-Reviewed: 2026-11-08
+Reviewed: 2026-11-26
 
 ## File coverage limits
 
