@@ -437,6 +437,15 @@ fun CleanerScreen(fa: Boolean, onBack: () -> Unit) {
                             result.candidates.size.toString()
                         )
                     }
+                    Text(
+                        cleanerTr(
+                            fa,
+                            "حجم خوانده‌شده برای مقایسهٔ تکراری‌ها: ${formatCleanerBytes(result.duplicateBytesChecked)}",
+                            "Data read for duplicate comparison: ${formatCleanerBytes(result.duplicateBytesChecked)}"
+                        ),
+                        color = CleanerTextSecondary,
+                        fontSize = 10.sp
+                    )
                     Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                         CleanerReasonBadge(
                             cleanerTr(fa, "موقت: ${result.candidates.count { CleanerReason.TEMPORARY in it.reasons }}",
