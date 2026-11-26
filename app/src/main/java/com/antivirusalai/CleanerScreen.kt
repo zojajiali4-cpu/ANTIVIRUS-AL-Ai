@@ -258,15 +258,23 @@ fun CleanerScreen(fa: Boolean, onBack: () -> Unit) {
                     }
                 }
                 Text(
-                    if (hasBroadAccess) cleanerTr(
-                        fa,
-                        "دسترسی همهٔ فایل‌ها فعال است. برنامه می‌تواند فایل‌های قابل‌دسترسی در حافظهٔ مشترک و رسانه‌های ذخیره‌سازی را بررسی کند.",
-                        "All files access is enabled. The app can inspect accessible files on shared storage and storage volumes."
-                    ) else cleanerTr(
-                        fa,
-                        "برای بررسی گستردهٔ حافظه، دسترسی ویژهٔ «مدیریت همهٔ فایل‌ها» را از تنظیمات Android فعال کن. این مجوز به داده‌های خصوصی برنامه‌های دیگر دسترسی نمی‌دهد.",
-                        "For a wider storage scan, enable Android's special All files access. This does not expose other apps' private data."
-                    ),
+                    when {
+                        hasBroadAccess -> cleanerTr(
+                            fa,
+                            "دسترسی همهٔ فایل‌ها فعال است. فایل‌های قابل‌دسترسی در حافظهٔ مشترک و رسانه‌ها بررسی می‌شوند؛ پوشه‌های خصوصی برنامه‌های دیگر و Android/data و Android/obb قابل‌دسترسی نیستند.",
+                            "All files access is enabled. Accessible shared-storage files and media are inspected; other apps' private folders and Android/data and Android/obb remain inaccessible."
+                        )
+                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> cleanerTr(
+                            fa,
+                            "برای بررسی گسترده، دسترسی ویژهٔ «مدیریت همهٔ فایل‌ها» را از تنظیمات Android فعال کن. این مجوز به داده‌های خصوصی برنامه‌های دیگر دسترسی نمی‌دهد.",
+                            "For a wider scan, enable Android's special All files access. This does not expose other apps' private data."
+                        )
+                        else -> cleanerTr(
+                            fa,
+                            "در این نسخهٔ Android، پوشه‌ها را از انتخاب‌گر رسمی فایل انتخاب کن. فقط همان پوشه‌های انتخاب‌شده قابل بررسی و پاکسازی هستند.",
+                            "On this Android version, choose folders with the system file picker. Only selected folders can be inspected and cleaned."
+                        )
+                    },
                     color = CleanerTextSecondary, fontSize = 11.sp, lineHeight = 16.sp
                 )
                 if (!hasBroadAccess && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
