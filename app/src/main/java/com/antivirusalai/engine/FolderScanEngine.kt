@@ -289,7 +289,7 @@ object FolderScanEngine {
             ) {
                 skipped++
                 failures += FolderScanFailure(candidate.name, "Folder scan reached the 25 GB total data limit.")
-                truncated = true
+                // The file is explicitly counted as not analyzed; discovery itself is complete.
                 continue
             }
 
@@ -323,12 +323,14 @@ object FolderScanEngine {
                     previewItems += reportItem
                 }
                 if (totalBytes >= MAX_TOTAL_BYTES) {
-                    truncated = index < candidates.lastIndex
-                    if (truncated) {
-                        skipped += candidates.size - index - 1
+                    val remaining = candidates.size - index - 1
+                    if (remaining > 0) {
+                        // These files were already enumerated, so record them as skipped
+                        // without marking the directory traversal itself as incomplete.
+                        skipped += remaining
                         failures += FolderScanFailure(
                             "Remaining files",
-                            "Stopped after reaching the 25 GB total data limit."
+                            "Stopped analyzing after the 25 GB total data limit; $remaining file(s) were recorded as not scanned."
                         )
                     }
                     break
@@ -341,17 +343,33 @@ object FolderScanEngine {
             }
         }
 
-        FolderScanReport(
+        val report = FolderScanReport(
             items = if (findingItems.isNotEmpty()) findingItems else previewItems,
             failures = failures,
             discoveredFiles = candidates.size + discoverySkipped,
             skippedFiles = skipped,
-            truncated = truncated || skipped > 0,
+            // Skipped candidates have an explicit final disposition. Only traversal
+            // gaps or an enumeration safety limit make the accessible scope incomplete.
+            truncated = truncated,
             scannedCountOverride = scannedCount,
             suspiciousCountOverride = suspiciousCount,
             unknownCountOverride = unknownCount,
             matchedCountOverride = matchedCount,
             coverageMatrix = coverage.snapshot()
         )
+        val finalProgress = if (report.fullScanCoverage) {
+            report.discoveredFiles
+        } else {
+            (report.discoveredFiles - 1).coerceAtLeast(0)
+        }
+        withContext(Dispatchers.Main.immediate) {
+            onProgress(
+                finalProgress,
+                report.discoveredFiles,
+                if (report.fullScanCoverage) "Accessible folder scope completed"
+                else "Accessible folder scope is incomplete; see skipped-file details"
+            )
+        }
+        report
     }
 }

@@ -28,7 +28,10 @@ class ScanCoverageTest {
     fun separatesScannedCoverageFromExplicitlyAccountedFiles() {
         val report = FolderScanReport(
             items = emptyList(),
-            failures = emptyList(),
+            failures = listOf(
+                FolderScanFailure("large.bin", "File exceeds the analysis limit."),
+                FolderScanFailure("locked.bin", "Access denied.")
+            ),
             discoveredFiles = 10,
             skippedFiles = 3,
             truncated = false,
@@ -36,6 +39,7 @@ class ScanCoverageTest {
         )
 
         assertEquals(7, report.scannedCount)
+        assertEquals(3, report.skippedFiles)
         assertEquals(70, report.scanCoveragePercent)
         assertEquals(100, report.completionPercent)
         assertEquals(0, report.unaccountedFiles)

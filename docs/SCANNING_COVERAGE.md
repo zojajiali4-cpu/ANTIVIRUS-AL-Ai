@@ -60,7 +60,8 @@ For device and user-selected-folder reports:
 - `skippedFiles` records candidates that could not be scanned because of access, per-file, aggregate-size, or other scan errors.
 - `unaccountedFiles` is the number of known candidates with neither a completed scan nor an explicit skip disposition.
 - `allDiscoveredFilesAccounted` is true only when every known candidate has a scanned-or-skipped disposition.
-- `fullScanCoverage` is true only when every known candidate was actually scanned, no candidate was skipped, and traversal reported no gaps.
+- `completionPercent` reaches 100 when every discovered candidate has a final disposition (scanned or explicitly skipped) and traversal has no gaps; it measures completion of the accessible inventory, not successful analysis.
+- `fullScanCoverage` is true when every known candidate has a scanned-or-skipped disposition and traversal reported no gaps. It does not mean every candidate was analyzed; use `scanCoveragePercent` and `skippedFiles` to show that distinction.
 
 The result preview remains bounded to 60 entries for memory safety; aggregate counters cover the full candidate batch. If traversal is truncated, permission is denied, a provider fails, or a safety cap is reached, the report remains incomplete even if all candidates already enumerated have been processed. Items outside the user-authorized Android scope cannot be enumerated or scanned.
 
