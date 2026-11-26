@@ -2494,7 +2494,8 @@ private fun BatchScanSummaryCard(
     val incompleteCoverage = !report.fullScanCoverage ||
         report.skippedFiles > 0 ||
         report.unaccountedFiles > 0 ||
-        report.unknownCount > 0
+        report.unknownCount > 0 ||
+        report.failures.isNotEmpty()
     Card(shape = RoundedCornerShape(21.dp), colors = CardDefaults.cardColors(containerColor = SurfaceBase)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
             Text(if (deep) tr(fa, "نتیجه اسکن عمیق", "Deep scan results") else tr(fa, "نتیجه اسکن سریع", "Quick scan results"), color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
