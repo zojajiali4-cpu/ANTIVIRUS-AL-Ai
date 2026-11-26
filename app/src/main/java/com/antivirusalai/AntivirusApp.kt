@@ -3093,7 +3093,7 @@ private fun SecurityToolsScreen(
             modifier = Modifier.fillMaxWidth(),
             icon = "clean",
             title = tr(fa, "پاک‌سازی حافظه", "Storage Cleaner"),
-            subtitle = tr(fa, "شناسایی فایل‌های موقت و تکراری با تأیید تو", "Find temporary and duplicate files with your approval"),
+            subtitle = tr(fa, "اسکن حافظه و پاکسازی کنترل‌شده فایل‌ها", "Inspect storage and clean selected files safely"),
             onClick = onOpenCleaner
         )
 
