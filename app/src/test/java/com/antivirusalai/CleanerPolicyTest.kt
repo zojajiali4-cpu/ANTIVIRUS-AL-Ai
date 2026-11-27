@@ -48,4 +48,15 @@ class CleanerPolicyTest {
         assertEquals(Long.MAX_VALUE, CleanerPolicy.saturatedAdd(Long.MAX_VALUE - 2, 10))
         assertEquals(17L, CleanerPolicy.saturatedAdd(10L, 7L))
     }
+
+    @Test
+    fun failedDirectoryListingIsIncompleteButReadableEmptyDirectoryIsComplete() {
+        val failed = CleanerPolicy.directoryListing<String>(null)
+        assertTrue(failed.entries.isEmpty())
+        assertFalse(failed.complete)
+
+        val empty = CleanerPolicy.directoryListing(emptyList<String>())
+        assertTrue(empty.entries.isEmpty())
+        assertTrue(empty.complete)
+    }
 }

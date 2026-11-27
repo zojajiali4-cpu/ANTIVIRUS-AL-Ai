@@ -23,6 +23,14 @@ internal object CleanerPolicy {
         name.substringAfterLast('.', "").lowercase(Locale.ROOT)
 
     /**
+     * A null listing means the provider did not let us inspect the directory.
+     * An empty list is different: it is a successfully inspected empty folder.
+     */
+    fun <T> directoryListing(entries: List<T>?): CleanerDirectoryListing<T> =
+        if (entries == null) CleanerDirectoryListing(emptyList(), complete = false)
+        else CleanerDirectoryListing(entries, complete = true)
+
+    /**
      * Android/data and Android/obb are protected by scoped-storage rules.
      * Within Android/, only Android/media is traversed by this cleaner.
      */
@@ -47,3 +55,8 @@ internal object CleanerPolicy {
         if (value > 0L && total > Long.MAX_VALUE - value) Long.MAX_VALUE
         else total + value
 }
+
+internal data class CleanerDirectoryListing<T>(
+    val entries: List<T>,
+    val complete: Boolean
+)

@@ -839,7 +839,7 @@ private suspend fun scanSharedStorage(context: Context): CleanerScanResult {
 
 private suspend fun scanSelectedTree(context: Context, rootUri: Uri): CleanerScanResult {
     val root = DocumentFile.fromTreeUri(context, rootUri)
-        ?: return CleanerScanResult(0, 0, 0L, emptyList(), false, 1, 0L)
+        ?: return CleanerScanResult(0, 0, 0L, emptyList(), true, 1, 0L)
     val queue = ArrayDeque<Pair<DocumentFile, Int>>()
     queue.add(root to 0)
     val files = ArrayList<CleanerScannableFile>()
@@ -858,11 +858,14 @@ private suspend fun scanSelectedTree(context: Context, rootUri: Uri): CleanerSca
             continue
         }
         directories++
-        val children = runCatching { folder.listFiles() }.getOrElse {
+        val listing = CleanerPolicy.directoryListing(
+            runCatching { folder.listFiles().toList() }.getOrNull()
+        )
+        if (!listing.complete) {
             issues++
-            emptyArray()
+            truncated = true
         }
-        for (child in children) {
+        for (child in listing.entries) {
             currentCoroutineContext().ensureActive()
             if (child.isDirectory) {
                 queue.add(child to depth + 1)
