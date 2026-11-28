@@ -47,8 +47,7 @@ MalwareBazaar/ThreatFox and URLhaus have separate approval gates in the publishe
 | `ALAI_FEED_SIGNING_KEY_PEM` | ECDSA P-256 private signing key matching the Android-pinned public key |
 | `ALAI_ABUSECH_COMMERCIAL_USE_APPROVED` | Operator attestation only after MalwareBazaar/ThreatFox terms are confirmed |
 | `ALAI_URLHAUS_COMMERCIAL_USE_APPROVED` | Separate operator attestation only after URLhaus terms are confirmed |
-| `ALAI_FEODO_TRACKER_COMMERCIAL_USE_APPROVED` | Explicit operator attestation after Feodo Tracker commercial terms are confirmed; absent/false disables ingestion |
-| `ALAI_ENABLE_FEODO_TRACKER` | Enables/disables Feodo Tracker ingestion; do not enable for commercial redistribution until terms are confirmed |
+| `ALAI_FEODO_TRACKER_COMMERCIAL_USE_APPROVED` | Explicit operator attestation after Feodo Tracker commercial terms are confirmed; absent/false disables ingestion. The workflow maps this secret to the publisher environment flag. |
 
 Never put a private signing key or provider credential in source code, the APK, an issue, a log, or a chat message.
 
