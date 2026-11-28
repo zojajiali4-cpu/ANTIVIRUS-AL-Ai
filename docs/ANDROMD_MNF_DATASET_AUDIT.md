@@ -54,7 +54,9 @@ Most importantly, the CSV has no package identifier or malware-family/group iden
 
 ## Storage decision
 
-Do not commit the raw CSV to ordinary Git history. At 403,328,807 bytes, it exceeds GitHub's 100 MiB hard limit for a normal Git object. GitHub recommends Git LFS or storing generated/large data outside Git; for this project, keep the raw research corpus outside the source repository and commit only small, reproducible tooling and audit documentation. See [GitHub repository limits](https://docs.github.com/en/repositories/creating-and-managing-repositories/repository-limits).
+The owner approved keeping the complete AndroMD research CSVs with the development repository **through Git LFS only**, not as ordinary Git blobs. The root `.gitattributes` now tracks files matching `datasets/AndroMD_*.csv`; intended path for this MNF file: `datasets/AndroMD_MNF_Dataset.csv`.
+
+At 403,328,807 bytes, this file exceeds GitHub's 100 MiB hard limit for a normal Git object. Git LFS storage and download bandwidth are quota-based, so check the account's remaining allowance before upload or repeated download. The raw MNF CSV has **not** been uploaded to the repository yet; the available GitHub write connector accepts UTF-8 text only, and the file service's binary materialization limit prevented transfer of the complete file. No placeholder LFS pointer has been created.
 
 ## Work performed
 
