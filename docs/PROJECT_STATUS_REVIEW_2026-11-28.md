@@ -109,3 +109,14 @@ For Cafe Bazaar, check its current publisher rules separately; Google Play polic
 - Corrected the stale threat-feed URL in `docs/SCANNING_COVERAGE.md`.
 - Added this consolidated review.
 - No raw dataset was uploaded, no model was trained, no APK/AAB was built, no test was run, no CI workflow was triggered, and `main` was not modified.
+
+
+## 8. Separate daily-branch quarantine repair (after the initial review)
+
+A separate source-level correction was made on `hardening/daily-antivirus-upgrades`:
+- Commit: `9fb29610a704a91b7ae273a87cbbb5a0b061df51`.
+- File: `app/src/main/java/com/antivirusalai/remediation/QuarantineVault.kt`.
+- Removed exactly two malformed duplicate lines that caused the two previous Kotlin compilation failures. The resulting 376-line file was fetched again from GitHub; the corrupted fragments are absent and the file matches the clean version from this no-CI hardening branch.
+- The daily branch already had draft PR #36 targeting `fix/serial-android-emulator-ci`. Updating the branch automatically triggered Android CI run #46160753730 (event: `pull_request`). The connected GitHub tools do not expose a cancel-run action. At the last status check, the APK assemble job was still in progress, the APK verification/upload steps were pending, and the run had no artifacts. This was an automatic side effect of the push, not a manually dispatched workflow.
+- No further commits should be pushed to the PR branch until the user decides how to proceed. The build result is not yet known from this review, so the source correction is **not yet build-verified**.
+- The commit on `hardening/complete-antivirus-no-ci` remains at the separate review stream and has no Actions run for its latest reviewed commit.
