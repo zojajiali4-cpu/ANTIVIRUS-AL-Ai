@@ -213,7 +213,11 @@ def main() -> int:
     os.environ["GIT_LFS_SKIP_SMUDGE"] = "1"
 
     origin = run(["git", "remote", "get-url", "origin"])
-    if REPOSITORY_FRAGMENT.lower() not in origin.lower():
+    expected_origin = re.compile(
+        r"(?:github\\.com[:/])" + re.escape(REPOSITORY_FRAGMENT) + r"(?:\\.git)?$",
+        re.IGNORECASE,
+    )
+    if not expected_origin.search(origin):
         raise RuntimeError(f"Unexpected origin remote: {origin}")
 
     current_branch = run(["git", "branch", "--show-current"])
@@ -251,6 +255,17 @@ def main() -> int:
         kinds = {r["kind"] for r in reports}
         if kinds == {"zeroone", "mnf"}:
             cross_check = compare_datasets(db)
+
+        # Each source is copied into the worktree and stored again in .git/lfs.
+        # Reserve additional space for the temporary SQLite duplicate index.
+        payload_bytes = sum(report["bytes"] for report in reports)
+        required_free = (2 * payload_bytes) + (256 * 1024 * 1024)
+        free_bytes = shutil.disk_usage(root).free
+        if free_bytes < required_free:
+            raise RuntimeError(
+                f"Insufficient free disk space: need about {required_free:,} bytes, "
+                f"have {free_bytes:,}. Free phone storage or import one dataset at a time."
+            )
 
         targets = []
         for report in reports:
