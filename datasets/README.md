@@ -10,13 +10,14 @@ Prasad, Arvind; Chandra, Shalini (2025), *AndroMD Android Malware Dataset*, Mend
 
 - `AndroMD_ZeroOne_Dataset.csv`: one SHA-256 identifier, `TOTCLASSES`, 116 binary source-code/token indicators, and `Label` (119 columns total).
 - `AndroMD_MNF_Dataset.csv`: one SHA-256 identifier, 300 binary AndroidManifest/permission indicators, and `Label` (302 columns total).
+- `AndroMD_KeyCount_Dataset.csv`: optional third view, containing token/API occurrence counts; Mendeley lists the file at about 204 MB. It has not been uploaded or inspected in this project.
 - The published record reports 600,298 apps, 397,814 legitimate and 202,484 malicious samples.
 
 The ZeroOne and MNF feature views are not the current 37-feature on-device model schema. Do not rename columns, synthesize missing fields, or activate the production ML model based on these files alone. A dedicated extractor/schema, full-file checks, package/family grouping, group-disjoint evaluation, and release gates are required first.
 
 ## Import from Android / Termux
 
-The branch includes `tools/import_andromd_datasets.py`. It checks the full CSV contents, validates every record, rejects duplicate SHA-256 values, computes file hashes, and, when both datasets are supplied, verifies exact SHA-256 and label alignment. It then stages only the supplied CSV files via Git LFS and pushes to `hardening/complete-antivirus-no-ci`.
+The branch includes `tools/import_andromd_datasets.py`. It checks the exact V1 header and column order, every row's width and value domains, labels, published row/class totals, duplicate SHA-256 values, and full-file SHA-256. When both ZeroOne and MNF are supplied, it checks one-to-one SHA-256 coverage and exact label alignment. It then stages only the supplied original CSV files through Git LFS and pushes to `hardening/complete-antivirus-no-ci`.
 
 Example after installing `git`, `git-lfs`, and `python`, authenticating with GitHub CLI, and cloning this branch:
 
@@ -26,6 +27,6 @@ python tools/import_andromd_datasets.py \
   --mnf ~/storage/downloads/AndroMD_MNF_Dataset.csv
 ```
 
-Either `--zeroone` or `--mnf` may be used on its own. If uploading only one, the cross-dataset alignment check cannot run. Check the repository owner's Git LFS storage allowance before pushing. A successful Git LFS push consumes storage; future downloads consume bandwidth.
+Either option may be omitted to upload one subset. With both supplied, the cross-dataset alignment test is mandatory. This script does not train a model or run builds, tests, or GitHub Actions. The full-file validation and actual upload are still pending.
 
-This tool does not train a model and does not run builds, tests, or GitHub Actions.
+Check the repository owner's Git LFS allowance before pushing. GitHub Free includes 10 GiB of storage and 10 GiB of download bandwidth per billing cycle; current account usage is not accessible from this project connector.
