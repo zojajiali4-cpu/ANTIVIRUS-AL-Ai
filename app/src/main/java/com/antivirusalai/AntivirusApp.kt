@@ -638,9 +638,9 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
                                 fa = fa,
                                 refreshKey = vaultRefresh,
                                 onDelete = { id ->
-                                    if (QuarantineVault.delete(context.applicationContext, id)) {
-                                        vaultRefresh++
-                                    }
+                                    val deleted = QuarantineVault.delete(context.applicationContext, id)
+                                    if (deleted) vaultRefresh++
+                                    deleted
                                 }
                             )
 
@@ -677,8 +677,8 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
                         Text(
                             tr(
                                 fa,
-                                "ANTIVIRUS AL AI  •  نسخه آزمایشی ${BuildConfig.VERSION_NAME}",
-                                "ANTIVIRUS AL AI  •  DEVELOPMENT BUILD ${BuildConfig.VERSION_NAME}"
+                                "Antivirus ALai  •  نسخه آزمایشی ${BuildConfig.VERSION_NAME}",
+                                "Antivirus ALai  •  DEVELOPMENT BUILD ${BuildConfig.VERSION_NAME}"
                             ),
                             color = TextTertiary,
                             fontSize = 10.sp,
@@ -696,7 +696,7 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
         AlertDialog(
             onDismissRequest = { selectedPlan = null },
             containerColor = SurfaceRaised,
-            title = { Text(tr(fa, "فروشگاه ANTIVIRUS AL AI", "ANTIVIRUS AL AI Store"), color = TextPrimary) },
+            title = { Text(tr(fa, "فروشگاه Antivirus ALai", "Antivirus ALai Store"), color = TextPrimary) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
                     Text(
@@ -734,8 +734,8 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
                         Text(
                             tr(
                                 fa,
-                                "برای پشتیبانی، گزارش اشکال یا پیشنهادهای مربوط به ANTIVIRUS AL AI از ایمیل رسمی زیر استفاده کن:",
-                                "For support, bug reports, or suggestions about ANTIVIRUS AL AI, use the official email below:"
+                                "برای پشتیبانی، گزارش اشکال یا پیشنهادهای مربوط به Antivirus ALai از ایمیل رسمی زیر استفاده کن:",
+                                "For support, bug reports, or suggestions about Antivirus ALai, use the official email below:"
                             ),
                             color = TextSecondary
                         )
@@ -748,7 +748,7 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
                                 .clickable {
                                     val intent = Intent(Intent.ACTION_SENDTO).apply {
                                         data = Uri.parse("mailto:$SUPPORT_EMAIL")
-                                        putExtra(Intent.EXTRA_SUBJECT, "ANTIVIRUS AL AI Support")
+                                        putExtra(Intent.EXTRA_SUBJECT, "Antivirus ALai Support")
                                     }
                                     try {
                                         context.startActivity(intent)
@@ -972,7 +972,7 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
         AlertDialog(
             onDismissRequest = { showAbout = false },
             containerColor = SurfaceRaised,
-            title = { Text("ANTIVIRUS AL AI", color = TextPrimary) },
+            title = { Text("Antivirus ALai", color = TextPrimary) },
             text = {
                 Text(
                     tr(
@@ -1001,7 +1001,7 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
                     tr(
                         fa,
                         "ابتدا یک نسخه رمزنگاری‌شده AES-GCM ساخته و هش آن تأیید می‌شود؛ سپس برنامه فقط از Android یا ارائه‌دهنده فایل درخواست حذف فایل مبدأ را می‌کند. حذف ممکن است به‌دلیل محدودیت مجوز ناموفق باشد. این عملیات برنامه نصب‌شده را uninstall نمی‌کند و حذف امن فیزیکی روی حافظه فلش تضمین‌پذیر نیست.",
-                        "ANTIVIRUS AL AI first creates and verifies an AES-GCM encrypted copy, then asks Android or the file provider to remove the source. Deletion can fail because of permission restrictions. This does not uninstall installed apps, and physical secure erasure cannot be guaranteed on flash storage."
+                        "Antivirus ALai first creates and verifies an AES-GCM encrypted copy, then asks Android or the file provider to remove the source. Deletion can fail because of permission restrictions. This does not uninstall installed apps, and physical secure erasure cannot be guaranteed on flash storage."
                     ),
                     color = TextSecondary
                 )
@@ -1052,7 +1052,7 @@ private fun BrandHeader(
             }
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    "ANTIVIRUS AL AI",
+                    "Antivirus ALai",
                     color = TextPrimary,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.ExtraBold,
@@ -3195,7 +3195,7 @@ private fun ToolActionTile(
 private fun QuarantineVaultScreen(
     fa: Boolean,
     refreshKey: Int,
-    onDelete: (String) -> Unit
+    onDelete: (String) -> Boolean
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -3217,7 +3217,7 @@ private fun QuarantineVaultScreen(
                     QuarantineVault.restoreTo(context.applicationContext, entry.id, destination)
                     Toast.makeText(
                         context,
-                        tr(fa, "فایل پس از بررسی صحت، بازیابی شد.", "File restored after integrity verification."),
+                        tr(fa, "فایل «${entry.originalName}» پس از بررسی صحت بازیابی شد.", "Restored ${entry.originalName} after integrity verification."),
                         Toast.LENGTH_LONG
                     ).show()
                 } catch (cancelled: CancellationException) {
@@ -3289,13 +3289,15 @@ private fun QuarantineVaultScreen(
                             IconArt("folder", tint = BrandTeal, size = 19.dp)
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text(tr(fa, "شناسه ", "Item ") + entry.id.take(8), color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                                Text(formatBytes(entry.sizeBytes), color = TextSecondary, fontSize = 10.sp)
+                                Text(entry.originalName, color = TextPrimary, fontSize = 11.sp, maxLines = 1)
+                        Text(formatBytes(entry.sizeBytes), color = TextSecondary, fontSize = 10.sp)
                             }
                             StatusBadge(tr(fa, "قرنطینه", "QUARANTINED"), ColorSuccess)
                         }
                         if (expandedEntryId == entry.id) {
                             Text("ID  " + entry.id, color = TextTertiary, fontSize = 9.sp)
                             Text("SHA-256  " + entry.sha256, color = TextTertiary, fontSize = 9.sp)
+                            entry.mimeType?.let { Text("MIME  $it", color = TextTertiary, fontSize = 9.sp) }
                             Text(
                                 tr(fa, "مقصد بازیابی را خودتان انتخاب می‌کنید. فایل اصلی فقط در صورتی حذف شده که Android آن را تأیید کرده باشد.", "Choose the restore destination. The original was removed only if Android confirmed its deletion."),
                                 color = TextSecondary,
@@ -3318,7 +3320,7 @@ private fun QuarantineVaultScreen(
                             OutlinedButton(
                                 onClick = {
                                     pendingRestore = entry
-                                    restoreLauncher.launch("restored-${entry.id.take(8)}.bin")
+                                    restoreLauncher.launch(entry.originalName)
                                 },
                                 enabled = !restoreInProgress,
                                 modifier = Modifier.weight(1f)
@@ -3342,13 +3344,25 @@ private fun QuarantineVaultScreen(
             title = { Text(tr(fa, "حذف نسخه قرنطینه؟", "Delete quarantined copy?"), color = TextPrimary) },
             text = {
                 Text(
-                    tr(fa, "این کار فقط نسخه رمزنگاری‌شده انتخاب‌شده را حذف می‌کند و فایل اصلی را بازیابی یا تغییر نمی‌دهد.", "This permanently deletes only the selected encrypted copy. It does not restore or change the original file."),
+                    tr(fa, "نسخه رمزنگاری‌شده «${entry.originalName}» برای همیشه از قرنطینه حذف می‌شود؛ این کار فایل اصلی را بازیابی یا تغییر نمی‌دهد.", "This permanently deletes the encrypted copy of ${entry.originalName}; it does not restore or change the original file."),
                     color = TextSecondary
                 )
             },
             confirmButton = {
                 Button(
-                    onClick = { onDelete(entry.id); pendingDelete = null },
+                    onClick = {
+                        val deleted = onDelete(entry.id)
+                        pendingDelete = null
+                        Toast.makeText(
+                            context,
+                            tr(
+                                fa,
+                                if (deleted) "نسخه قرنطینه حذف شد." else "حذف نسخه قرنطینه انجام نشد.",
+                                if (deleted) "Quarantined copy deleted." else "Could not delete the quarantined copy."
+                            ),
+                            Toast.LENGTH_LONG
+                        ).show()
+                    },
                     colors = ButtonDefaults.buttonColors(containerColor = ColorDanger)
                 ) {
                     Text(tr(fa, "حذف دائمی", "Delete permanently"), color = AppBackground)
@@ -4197,11 +4211,11 @@ private fun featureTitle(fa: Boolean, feature: String): String = when (feature) 
 }
 
 private fun featureDescription(fa: Boolean, feature: String): String = when (feature) {
-    "quarantine" -> tr(fa, "با تأیید کاربر، نسخه AES-GCM در فضای خصوصی ذخیره و هش آن بررسی می‌شود؛ سپس حذف فایل مبدأ فقط در صورت اجازه Android یا ارائه‌دهنده فایل درخواست می‌شود. موتور ذخیره‌سازی فهرست، بازیابی و حذف را پشتیبانی می‌کند، اما صفحه مدیریتی کامل قرنطینه هنوز در رابط کاربری تکمیل نشده است.", "After user confirmation, an AES-GCM encrypted copy is stored in private app storage and its hash is verified. Source deletion is requested only if Android or the document provider allows it. The storage engine supports listing, restore and deletion, but a complete quarantine-management screen is not yet available in the UI.")
+    "quarantine" -> tr(fa, "نسخه AES-GCM در فضای خصوصی برنامه نگهداری می‌شود. فهرست، نام فایل، اندازه و SHA-256 نمایش داده می‌شود؛ جزئیات، بازیابی پس از احراز اصالت و حذف نسخه رمزنگاری‌شده با تأیید شما در دسترس است. فایل مبدأ فقط در مسیر قرنطینه‌سازی صریح و پس از تأیید نسخه ذخیره‌شده حذف می‌شود.", "AES-GCM encrypted copies are stored in private app storage. The vault lists the original filename, size and SHA-256, and supports details, integrity-verified restore and user-confirmed deletion. The source file is removed only by the explicit quarantine-and-remove operation after its encrypted copy is verified.")
     "vulnerability" -> tr(fa, "این ماژول هنوز نتیجه آسیب‌پذیری واقعی تولید نمی‌کند. مرحله بعدی شامل شناسایی SDKها و کتابخانه‌ها و تطبیق آن‌ها با منابع CVE معتبر است.", "This module does not yet produce vulnerability findings. Next steps include SDK and library inventory mapped to trusted CVE sources.")
     "phishing" -> tr(fa, "بررسی URL با فهرست اعتبار و تحلیل دامنه هنوز متصل نشده است. هیچ لینک یا پیامی در پس‌زمینه خوانده نمی‌شود.", "URL reputation and domain analysis are not connected yet. No links or messages are read in the background.")
     "network" -> tr(fa, "محافظ شبکه هنوز فعال نیست. پیاده‌سازی آن به طراحی شفاف DNS/VPN محلی و بررسی سیاست‌های Android و Google Play نیاز دارد.", "Network protection is not active. Implementation requires transparent local DNS/VPN design and Android/Google Play policy review.")
-    "brain" -> tr(fa, "مسیر اسکن از هش‌های امضاشده، قواعد محتوایی امضاشده، تحلیل ایستای APK/DEX/ELF و امتیازدهی چندنشانه‌ای پشتیبانی می‌کند؛ اما این منابع تا انتشار و نصب بانک تولیدی معتبر فعال نیستند. مدل یادگیری ماشین هنوز NOT_CONFIGURED است و تحلیل رفتاری در sandbox اجرا نمی‌شود.", "The scan pipeline supports signed hash reputation, signed content rules, APK/DEX/ELF static analysis and multi-signal risk scoring. These production intelligence sources remain inactive until a valid feed and rule bundle are published and installed. On-device ML is still NOT_CONFIGURED, and runtime sandbox analysis is not active.")
+    "brain" -> tr(fa, "موتور استنتاج ML به اسکن APK متصل است، اما فایل مدل آموزش‌دیده و ارزیابی‌شده هنوز در برنامه نصب نشده و وضعیت آن NOT_CONFIGURED است. موتور بومی محتوا و آزمون داخلی فعال‌اند؛ بانک امضا و قواعد تولیدی فقط پس از انتشار خوراک‌های امضاشده و پذیرش موفق دستگاه فعال می‌شوند. تحلیل رفتاری sandbox اجرا نمی‌شود.", "The ML inference path is integrated into APK scanning, but no trained and independently evaluated model artifact is packaged, so its state remains NOT_CONFIGURED. The native content engine and its self-test are present; production hash signatures and content rules become active only after signed feeds are published and successfully accepted by the app. Dynamic sandbox analysis is not active.")
     "selfdefense" -> tr(fa, "برنامه از تنظیمات پایه مانند غیرفعال‌بودن cleartext و backup استفاده می‌کند. پایش یکپارچگی زمان اجرا و دفاع در برابر دست‌کاری هنوز نیازمند توسعه و آزمون است.", "The app uses baseline controls such as disabled cleartext traffic and backup. Runtime integrity and anti-tamper monitoring still require implementation and testing.")
     "permissions" -> tr(fa, "اسکن سریع مسیرهای رایج حافظه را بررسی می‌کند. اسکن عمیق با اجازه مدیریت همه فایل‌ها، حافظه اشتراکی و APK برنامه‌های نصب‌شده را بررسی می‌کند؛ داده خصوصی برنامه‌های دیگر، Android/data و Android/obb قابل‌دسترسی نیستند.", "Quick scan checks common storage locations. Deep scan uses user-approved All files access to inspect shared storage and installed-app APKs; other apps’ private data, Android/data and Android/obb remain inaccessible.")
     else -> tr(fa, "ایمیل پشتیبانی رسمی: $SUPPORT_EMAIL", "Official support email: $SUPPORT_EMAIL")

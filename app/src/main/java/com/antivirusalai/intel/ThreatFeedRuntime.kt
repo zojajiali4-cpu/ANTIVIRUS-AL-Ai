@@ -20,7 +20,7 @@ data class ThreatFeedStatus(val freshness: ThreatFeedFreshness, val detailCode: 
 object ThreatFeedRuntime {
     const val RELEASE_KEY_ID = "alai-release-2026"
     const val FEED_URL =
-        "https://raw.githubusercontent.com/karafarin12800-del/ANTIVIRUS-AL-Ai/security-feed/threat-feed/latest.alfeed"
+        "https://raw.githubusercontent.com/zojajiali4-cpu/ANTIVIRUS-AL-Ai/security-feed/threat-feed/latest.alfeed"
 
     // Public X.509 P-256 key only. Never package the matching private signing key.
     private const val RELEASE_PUBLIC_KEY_X509_B64 =

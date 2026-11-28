@@ -44,6 +44,7 @@ class QuarantineVaultInstrumentedTest {
 
             val listed = QuarantineVault.list(context).firstOrNull { it.id == receipt.id }
             assertNotNull("A valid quarantine entry should be listed.", listed)
+            assertEquals("The original filename should be retained in vault metadata.", source.name, listed?.originalName)
 
             val restoredEntry = QuarantineVault.restoreTo(
                 context,
@@ -51,6 +52,7 @@ class QuarantineVaultInstrumentedTest {
                 Uri.fromFile(restored)
             )
             assertEquals(expectedHash, restoredEntry.sha256)
+            assertEquals("Restore should retain the original filename metadata.", source.name, restoredEntry.originalName)
             assertArrayEquals("Restored bytes must exactly match the verified source.", payload, restored.readBytes())
 
             assertTrue("The selected vault entry should be deletable.", QuarantineVault.delete(context, receipt.id))

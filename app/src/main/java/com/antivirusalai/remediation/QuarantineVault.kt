@@ -3,6 +3,7 @@ package com.antivirusalai.remediation
 import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
+import android.provider.OpenableColumns
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import kotlinx.coroutines.Dispatchers
@@ -32,7 +33,9 @@ data class VaultReceipt(
 data class VaultEntry(
     val id: String,
     val sizeBytes: Long,
-    val sha256: String
+    val sha256: String,
+    val originalName: String = "quarantined-file.bin",
+    val mimeType: String? = null
 )
 
 /**
@@ -47,6 +50,9 @@ object QuarantineVault {
     private const val TAG_BITS = 128
     private val idPattern = Regex("[0-9a-fA-F-]{36}")
     private val hashPattern = Regex("[0-9a-f]{64}")
+    private val mimeTypePattern = Regex("[A-Za-z0-9!#    private val hashPattern = Regex("[0-9a-f]{64}")
+^_.+-]{1,64}/[A-Za-z0-9!#    private val hashPattern = Regex("[0-9a-f]{64}")
+^_.+-]{1,64}")
 
     suspend fun quarantineAndRemoveSource(
         context: Context,
@@ -75,6 +81,8 @@ object QuarantineVault {
         val metadata = File(directory, "$id.meta")
         val temporary = File.createTempFile("incoming-", ".part", directory)
         val digest = MessageDigest.getInstance("SHA-256")
+        val originalName = sourceDisplayName(context, source, id)
+        val mimeType = sourceMimeType(context, source)
         var total = 0L
 
         try {
@@ -108,7 +116,7 @@ object QuarantineVault {
             }
 
             atomicMove(temporary, encrypted)
-            writeMetadata(metadata, total, actualHash)
+            writeMetadata(metadata, total, actualHash, originalName, mimeType)
             VaultReceipt(id, total, actualHash, sourceRemoved = false)
         } catch (error: Exception) {
             temporary.delete()
@@ -223,12 +231,14 @@ object QuarantineVault {
             check(it.exists() || it.mkdirs()) { "Could not create private quarantine storage." }
         }
 
-    private fun writeMetadata(file: File, size: Long, hash: String) {
+    private fun writeMetadata(file: File, size: Long, hash: String, originalName: String, mimeType: String?) {
         val temp = File.createTempFile("meta-", ".part", file.parentFile)
         try {
             val properties = Properties().apply {
                 setProperty("size", size.toString())
                 setProperty("sha256", hash)
+                setProperty("original_name", originalName)
+                mimeType?.let { setProperty("mime_type", it) }
             }
             FileOutputStream(temp).use { output ->
                 properties.store(output, "ANTIVIRUS AL AI quarantine receipt")
@@ -249,8 +259,52 @@ object QuarantineVault {
             val size = props.getProperty("size")?.toLongOrNull() ?: return null
             val hash = props.getProperty("sha256") ?: return null
             if (size < 0 || !hashPattern.matches(hash)) return null
-            VaultEntry(id, size, hash)
+            val originalName = sanitizeDisplayName(props.getProperty("original_name"), id)
+            val mimeType = props.getProperty("mime_type")?.takeIf { mimeTypePattern.matches(it) }
+            VaultEntry(id, size, hash, originalName, mimeType)
         }.getOrNull()
+    }
+
+    private fun sourceDisplayName(context: Context, source: Uri, id: String): String {
+        val rawName = if (source.scheme == "file") {
+            source.path?.let { File(it).name }
+        } else {
+            runCatching {
+                context.contentResolver.query(
+                    source,
+                    arrayOf(OpenableColumns.DISPLAY_NAME),
+                    null,
+                    null,
+                    null
+                )?.use { cursor ->
+                    val column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (cursor.moveToFirst() && column >= 0 && !cursor.isNull(column)) {
+                        cursor.getString(column)
+                    } else {
+                        null
+                    }
+                }
+            }.getOrNull()
+        } ?: source.lastPathSegment
+
+        return sanitizeDisplayName(rawName, id)
+    }
+
+    private fun sourceMimeType(context: Context, source: Uri): String? =
+        if (source.scheme == "file") null
+        else runCatching { context.contentResolver.getType(source) }
+            .getOrNull()
+            ?.takeIf { mimeTypePattern.matches(it) }
+
+    private fun sanitizeDisplayName(rawName: String?, id: String): String {
+        val safeName = rawName.orEmpty()
+            .replace('\\', '/')
+            .substringAfterLast('/')
+            .filter { it.code >= 0x20 && it.code != 0x7f }
+            .trim()
+            .take(120)
+        return safeName.takeIf { it.isNotBlank() && it != "." && it != ".." }
+            ?: "quarantined-${id.take(8)}.bin"
     }
 
     private fun openSource(context: Context, source: Uri) =

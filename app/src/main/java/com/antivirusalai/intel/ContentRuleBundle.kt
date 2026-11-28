@@ -175,7 +175,7 @@ object ContentRuleBundleParser {
 
 object ContentRuleBundleRuntime {
     const val FEED_URL =
-        "https://raw.githubusercontent.com/karafarin12800-del/ANTIVIRUS-AL-Ai/security-feed/content-rules/latest.alrules"
+        "https://raw.githubusercontent.com/zojajiali4-cpu/ANTIVIRUS-AL-Ai/security-feed/content-rules/latest.alrules"
     private const val MAX_DOWNLOAD_BYTES = ContentRuleBundleParser.MAX_BUNDLE_BYTES
     private const val DIRECTORY = "content-rules"
     private const val FILE_NAME = "current.alrules"
