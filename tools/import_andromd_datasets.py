@@ -192,6 +192,8 @@ def main() -> int:
 
     root = Path(run(["git", "rev-parse", "--show-toplevel"])).resolve()
     os.chdir(root)
+    # Fetch branch pointers without downloading any existing LFS payloads.
+    os.environ["GIT_LFS_SKIP_SMUDGE"] = "1"
 
     origin = run(["git", "remote", "get-url", "origin"])
     if REPOSITORY_FRAGMENT.lower() not in origin.lower():
@@ -264,25 +266,21 @@ def main() -> int:
                 )
 
         staged = set(run(["git", "diff", "--cached", "--name-only"]).splitlines())
-        if staged != set(stage_paths):
-            raise RuntimeError(
-                f"Unexpected staged files; expected {stage_paths}, found {sorted(staged)}"
-            )
+        unexpected = staged - set(stage_paths)
+        if unexpected:
+            raise RuntimeError(f"Unexpected staged files: {sorted(unexpected)}")
 
-        if run(["git", "diff", "--cached", "--quiet"], check=False) == "":
-            # git diff --quiet has no stdout whether or not there are changes;
-            # use its exit code explicitly below instead.
-            diff = subprocess.run(
-                ["git", "diff", "--cached", "--quiet"], check=False
-            )
-            changed = diff.returncode != 0
-        else:
-            changed = True
+        changed = subprocess.run(
+            ["git", "diff", "--cached", "--quiet"], check=False
+        ).returncode != 0
 
         if changed:
             run(["git", "commit", "-m", "Add validated AndroMD datasets via Git LFS"])
 
+        # Explicit LFS push also makes a retry safe when the Git commit already exists.
+        run(["git", "lfs", "push", "origin", BRANCH])
         run(["git", "push", "origin", BRANCH])
+        run(["git", "fetch", "origin", BRANCH])
         run(["git", "lfs", "fsck"])
         remote_sha = run(["git", "ls-remote", "origin", f"refs/heads/{BRANCH}"]).split()[0]
         local_sha = run(["git", "rev-parse", "HEAD"])
