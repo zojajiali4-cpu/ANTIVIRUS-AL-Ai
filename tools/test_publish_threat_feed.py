@@ -7,6 +7,11 @@ HASH_B = "b" * 64
 
 
 class ThreatFeedTests(unittest.TestCase):
+    def test_feodo_tracker_is_disabled_without_explicit_approval(self):
+        self.assertFalse(publisher.feodo_tracker_enabled({}))
+        self.assertFalse(publisher.feodo_tracker_enabled({"ALAI_ENABLE_FEODO_TRACKER": "false"}))
+        self.assertTrue(publisher.feodo_tracker_enabled({"ALAI_ENABLE_FEODO_TRACKER": "true"}))
+
     def test_threatfox_imports_typed_iocs_and_hashes(self):
         rows = [
             {"ioc_type": "domain", "ioc": "Bad.Example.", "malware": "win.test", "confidence_level": 90},

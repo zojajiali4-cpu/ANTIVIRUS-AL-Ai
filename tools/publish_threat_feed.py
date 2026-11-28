@@ -256,6 +256,12 @@ def fetch_feodo() -> list[dict]:
     return data
 
 
+def feodo_tracker_enabled(environment: dict[str, str] | None = None) -> bool:
+    """Require explicit operator approval before ingesting Feodo indicators."""
+    values = os.environ if environment is None else environment
+    return values.get("ALAI_ENABLE_FEODO_TRACKER", "false").strip().lower() == "true"
+
+
 def make_entries(mb: list[dict], tf: list[dict] | None = None,
                  urlhaus: list[dict] | None = None, feodo: list[dict] | None = None,
                  now: int | None = None) -> list[Indicator]:
@@ -388,7 +394,7 @@ def main() -> None:
     tf_key = os.environ.get("THREATFOX_AUTH_KEY", "").strip()
     urlhaus_key = os.environ.get("URLHAUS_AUTH_KEY", "").strip()
     urlhaus_ok = os.environ.get("ALAI_URLHAUS_COMMERCIAL_USE_APPROVED", "").lower() == "true"
-    feodo_enabled = os.environ.get("ALAI_ENABLE_FEODO_TRACKER", "true").lower() == "true"
+    feodo_enabled = feodo_tracker_enabled()
 
     if not abusech_ok:
         fail("MalwareBazaar/ThreatFox require verified commercial-use entitlement before publishing.")

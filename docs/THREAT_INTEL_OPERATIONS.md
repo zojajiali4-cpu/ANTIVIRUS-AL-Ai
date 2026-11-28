@@ -47,6 +47,7 @@ MalwareBazaar/ThreatFox and URLhaus have separate approval gates in the publishe
 | `ALAI_FEED_SIGNING_KEY_PEM` | ECDSA P-256 private signing key matching the Android-pinned public key |
 | `ALAI_ABUSECH_COMMERCIAL_USE_APPROVED` | Operator attestation only after MalwareBazaar/ThreatFox terms are confirmed |
 | `ALAI_URLHAUS_COMMERCIAL_USE_APPROVED` | Separate operator attestation only after URLhaus terms are confirmed |
+| `ALAI_FEODO_TRACKER_COMMERCIAL_USE_APPROVED` | Explicit operator attestation after Feodo Tracker commercial terms are confirmed; absent/false disables ingestion |
 | `ALAI_ENABLE_FEODO_TRACKER` | Enables/disables Feodo Tracker ingestion; do not enable for commercial redistribution until terms are confirmed |
 
 Never put a private signing key or provider credential in source code, the APK, an issue, a log, or a chat message.
@@ -55,7 +56,9 @@ Never put a private signing key or provider credential in source code, the APK, 
 
 `.github/workflows/publish-threat-feed.yml` supports a manual key-only check and a separate publish operation, and it is scheduled every 12 hours once available on the default branch.
 
-The key-only operation verifies the configured private key matches the public key pinned in Android. It must not contact any provider, generate a feed, or publish a file.
+The Android-pinned X.509 public key has SHA-256 DER fingerprint `a8cfdaee89182f627c213306808c85869a4ea07d846279d6a41ab760b45f0095` (the v2 public key fingerprint recorded for this project). The key-only operation verifies the configured private key matches the public key pinned in Android. It must not contact any provider, generate a feed, or publish a file.
+
+The `security-feed` branch is created as an orphan branch automatically on the first successful publish if it does not yet exist; its absence is not a bootstrap blocker.
 
 The publish operation:
 1. Fails closed when required credentials or approvals are missing.

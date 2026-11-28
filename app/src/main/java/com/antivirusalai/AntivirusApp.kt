@@ -3290,7 +3290,7 @@ private fun QuarantineVaultScreen(
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text(tr(fa, "شناسه ", "Item ") + entry.id.take(8), color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                                 Text(entry.originalName, color = TextPrimary, fontSize = 11.sp, maxLines = 1)
-                        Text(formatBytes(entry.sizeBytes), color = TextSecondary, fontSize = 10.sp)
+                                Text(formatBytes(entry.sizeBytes), color = TextSecondary, fontSize = 10.sp)
                             }
                             StatusBadge(tr(fa, "قرنطینه", "QUARANTINED"), ColorSuccess)
                         }
