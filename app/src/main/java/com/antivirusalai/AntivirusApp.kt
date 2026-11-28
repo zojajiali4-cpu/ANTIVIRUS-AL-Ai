@@ -707,8 +707,8 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
                     Text(
                         tr(
                             fa,
-                            "پرداخت Google Play و مدیریت اشتراک هنوز متصل نشده‌اند. هیچ مبلغی دریافت یا اشتراکی فعال نمی‌شود. این بخش فعلاً پیش‌نمایش طرح‌هاست.",
-                            "Google Play Billing and subscription management are not connected yet. No payment or subscription activation will occur. This is currently a plan preview."
+                            "پرداخت درون‌برنامه‌ای کافه‌بازار و مدیریت اشتراک هنوز متصل نشده‌اند. هیچ مبلغی دریافت یا اشتراکی فعال نمی‌شود. این بخش فعلاً پیش‌نمایش طرح‌هاست.",
+                            "Cafe Bazaar in-app billing and subscription management are not connected yet. No payment or subscription activation will occur. This is currently a plan preview."
                         ),
                         color = TextSecondary
                     )
@@ -3397,8 +3397,8 @@ private fun StoreScreen(
             title = tr(fa, "پرداخت هنوز فعال نیست", "Checkout is not active"),
             body = tr(
                 fa,
-                "این نسخه کاتالوگ طرح‌ها را نشان می‌دهد. پرداخت Google Play، قیمت‌گذاری منطقه‌ای و مدیریت اشتراک هنوز متصل نشده‌اند؛ هیچ مبلغی دریافت نمی‌شود.",
-                "This version displays the plan catalogue only. Google Play Billing, regional pricing and subscription management are not connected. No payment will be taken."
+                "این نسخه کاتالوگ طرح‌ها را نشان می‌دهد. پرداخت کافه‌بازار، قیمت‌گذاری منطقه‌ای و مدیریت اشتراک هنوز متصل نشده‌اند؛ هیچ مبلغی دریافت نمی‌شود.",
+                "This version displays the plan catalogue only. Cafe Bazaar billing, regional pricing and subscription management are not connected. No payment will be taken."
             ),
             warning = true
         )
