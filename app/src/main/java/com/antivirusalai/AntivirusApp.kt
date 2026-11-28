@@ -3198,32 +3198,87 @@ private fun QuarantineVaultScreen(
     onDelete: (String) -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val entries = remember(refreshKey) { QuarantineVault.list(context.applicationContext) }
     var pendingDelete by remember { mutableStateOf<VaultEntry?>(null) }
+    var pendingRestore by remember { mutableStateOf<VaultEntry?>(null) }
+    var restoreInProgress by remember { mutableStateOf(false) }
+    var expandedEntryId by remember { mutableStateOf<String?>(null) }
+
+    val restoreLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/octet-stream")
+    ) { destination ->
+        val entry = pendingRestore
+        pendingRestore = null
+        if (destination != null && entry != null && !restoreInProgress) {
+            restoreInProgress = true
+            scope.launch {
+                try {
+                    QuarantineVault.restoreTo(context.applicationContext, entry.id, destination)
+                    Toast.makeText(
+                        context,
+                        tr(fa, "فایل پس از بررسی صحت، بازیابی شد.", "File restored after integrity verification."),
+                        Toast.LENGTH_LONG
+                    ).show()
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    Toast.makeText(
+                        context,
+                        error.message ?: tr(fa, "بازیابی فایل انجام نشد.", "File restoration failed."),
+                        Toast.LENGTH_LONG
+                    ).show()
+                } finally {
+                    restoreInProgress = false
+                }
+            }
+        }
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(15.dp)) {
         Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
             EyebrowLabel(tr(fa, "فضای ایمن", "SECURE STORAGE"))
             Text(tr(fa, "قرنطینه", "Quarantine"), color = TextPrimary, fontSize = 25.sp, fontWeight = FontWeight.Bold)
-            Text(tr(fa, "فایل‌های قرنطینه‌شده جدا از فایل‌های اصلی نگهداری می‌شوند.", "Quarantined copies are kept separate from their original files."), color = TextSecondary, fontSize = 11.sp)
+            Text(
+                tr(fa, "نسخه‌های رمزنگاری‌شده را بررسی، بازیابی یا حذف کنید.", "Review, restore, or delete encrypted quarantine copies."),
+                color = TextSecondary,
+                fontSize = 11.sp
+            )
         }
 
         Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = SurfaceBase)) {
-            Row(Modifier.fillMaxWidth().padding(15.dp), horizontalArrangement = Arrangement.spacedBy(11.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.fillMaxWidth().padding(15.dp),
+                horizontalArrangement = Arrangement.spacedBy(11.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 IconArt("shield_location", tint = BrandTeal, size = 23.dp)
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(tr(fa, "حفاظت از نسخه‌های قرنطینه", "Quarantine protection"), color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                    Text(tr(fa, "حذف نسخه قرنطینه فقط با تأیید شما انجام می‌شود.", "Deleting a quarantined copy always requires your confirmation."), color = TextSecondary, fontSize = 10.sp)
+                    Text(
+                        tr(fa, "بازیابی فقط پس از بررسی اصالت رمزنگاری‌شده انجام می‌شود؛ حذف نیازمند تأیید شماست.", "Restore verifies encrypted integrity; deletion requires your confirmation."),
+                        color = TextSecondary,
+                        fontSize = 10.sp
+                    )
                 }
             }
         }
 
         if (entries.isEmpty()) {
             Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = SurfaceBase)) {
-                Column(Modifier.fillMaxWidth().padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                Column(
+                    Modifier.fillMaxWidth().padding(22.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(9.dp)
+                ) {
                     IconArt("status_shield", tint = ColorSuccess, size = 34.dp)
                     Text(tr(fa, "قرنطینه خالی است", "Quarantine is empty"), color = TextPrimary, fontWeight = FontWeight.Bold)
-                    Text(tr(fa, "در صورت قرنطینه یک فایل، اطلاعات آن اینجا نمایش داده می‌شود.", "Quarantined items will appear here."), color = TextSecondary, fontSize = 11.sp, textAlign = TextAlign.Center)
+                    Text(
+                        tr(fa, "در صورت قرنطینه یک فایل، اطلاعات آن اینجا نمایش داده می‌شود.", "Quarantined items will appear here."),
+                        color = TextSecondary,
+                        fontSize = 11.sp,
+                        textAlign = TextAlign.Center
+                    )
                 }
             }
         } else {
@@ -3232,14 +3287,47 @@ private fun QuarantineVaultScreen(
                     Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                             IconArt("folder", tint = BrandTeal, size = 19.dp)
-                            Text(entry.id.take(8), color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                            Spacer(Modifier.weight(1f))
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(tr(fa, "شناسه ", "Item ") + entry.id.take(8), color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                Text(formatBytes(entry.sizeBytes), color = TextSecondary, fontSize = 10.sp)
+                            }
                             StatusBadge(tr(fa, "قرنطینه", "QUARANTINED"), ColorSuccess)
                         }
-                        Text(tr(fa, "حجم: " + formatBytes(entry.sizeBytes), "Size: " + formatBytes(entry.sizeBytes)), color = TextSecondary, fontSize = 10.sp)
-                        Text("SHA-256  " + entry.sha256.take(20) + "…", color = TextTertiary, fontSize = 9.sp)
-                        OutlinedButton(onClick = { pendingDelete = entry }, modifier = Modifier.align(Alignment.End)) {
-                            Text(tr(fa, "حذف نسخه قرنطینه", "Delete quarantined copy"), color = ColorDanger, fontSize = 10.sp)
+                        if (expandedEntryId == entry.id) {
+                            Text("ID  " + entry.id, color = TextTertiary, fontSize = 9.sp)
+                            Text("SHA-256  " + entry.sha256, color = TextTertiary, fontSize = 9.sp)
+                            Text(
+                                tr(fa, "مقصد بازیابی را خودتان انتخاب می‌کنید. فایل اصلی فقط در صورتی حذف شده که Android آن را تأیید کرده باشد.", "Choose the restore destination. The original was removed only if Android confirmed its deletion."),
+                                color = TextSecondary,
+                                fontSize = 10.sp
+                            )
+                        } else {
+                            Text("SHA-256  " + entry.sha256.take(20) + "…", color = TextTertiary, fontSize = 9.sp)
+                        }
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedButton(
+                                onClick = { expandedEntryId = if (expandedEntryId == entry.id) null else entry.id },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(tr(fa, "جزئیات", "Details"), color = TextPrimary, fontSize = 10.sp)
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    pendingRestore = entry
+                                    restoreLauncher.launch("restored-${entry.id.take(8)}.bin")
+                                },
+                                enabled = !restoreInProgress,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(tr(fa, "بازیابی", "Restore"), color = BrandTeal, fontSize = 10.sp)
+                            }
+                            OutlinedButton(onClick = { pendingDelete = entry }, enabled = !restoreInProgress) {
+                                Text(tr(fa, "حذف", "Delete"), color = ColorDanger, fontSize = 10.sp)
+                            }
                         }
                     }
                 }
@@ -3252,14 +3340,24 @@ private fun QuarantineVaultScreen(
             onDismissRequest = { pendingDelete = null },
             containerColor = SurfaceRaised,
             title = { Text(tr(fa, "حذف نسخه قرنطینه؟", "Delete quarantined copy?"), color = TextPrimary) },
-            text = { Text(tr(fa, "این کار نسخه رمزنگاری‌شده ذخیره‌شده در قرنطینه را برای همیشه حذف می‌کند. فایل اصلی را بازیابی نمی‌کند.", "This permanently deletes the encrypted quarantine copy. It does not restore or change the original file."), color = TextSecondary) },
+            text = {
+                Text(
+                    tr(fa, "این کار فقط نسخه رمزنگاری‌شده انتخاب‌شده را حذف می‌کند و فایل اصلی را بازیابی یا تغییر نمی‌دهد.", "This permanently deletes only the selected encrypted copy. It does not restore or change the original file."),
+                    color = TextSecondary
+                )
+            },
             confirmButton = {
-                Button(onClick = { onDelete(entry.id); pendingDelete = null }, colors = ButtonDefaults.buttonColors(containerColor = ColorDanger)) {
+                Button(
+                    onClick = { onDelete(entry.id); pendingDelete = null },
+                    colors = ButtonDefaults.buttonColors(containerColor = ColorDanger)
+                ) {
                     Text(tr(fa, "حذف دائمی", "Delete permanently"), color = AppBackground)
                 }
             },
             dismissButton = {
-                OutlinedButton(onClick = { pendingDelete = null }) { Text(tr(fa, "انصراف", "Cancel"), color = TextPrimary) }
+                OutlinedButton(onClick = { pendingDelete = null }) {
+                    Text(tr(fa, "انصراف", "Cancel"), color = TextPrimary)
+                }
             }
         )
     }
