@@ -214,7 +214,7 @@ def main() -> int:
 
     origin = run(["git", "remote", "get-url", "origin"])
     expected_origin = re.compile(
-        r"(?:github\\.com[:/])" + re.escape(REPOSITORY_FRAGMENT) + r"(?:\\.git)?$",
+        r"(?:github\.com[:/])" + re.escape(REPOSITORY_FRAGMENT) + r"(?:\.git)?$",
         re.IGNORECASE,
     )
     if not expected_origin.search(origin):
