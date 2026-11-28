@@ -1,6 +1,6 @@
 # AndroMD MNF Dataset — Intake Audit
 
-**Status: reviewed candidate; not approved as input to the current 37-feature model.**
+**Status: valid research-corpus candidate for a separate manifest model; not compatible with the current 37-feature model as-is. Not trained or activated.**
 
 ## Source and provenance
 
@@ -8,60 +8,50 @@
 - Published dataset: [AndroMD Android Malware Dataset, Mendeley Data, V1](https://data.mendeley.com/datasets/pwyj5b3khp/1)
 - DOI: [10.17632/pwyj5b3khp.1](https://doi.org/10.17632/pwyj5b3khp.1)
 - Authors: Arvind Prasad and Shalini Chandra (2025)
-- Dataset landing page lists CC BY 4.0. Preserve attribution and verify any upstream/source-specific terms before redistributing derivatives or samples.
-- The published record describes 600,298 apps: 397,814 legitimate and 202,484 malicious. These are source-published totals; this audit did not independently recount every label in the 403 MB file.
+- Dataset landing page lists CC BY 4.0.
+- Published record reports 600,298 apps: 397,814 legitimate and 202,484 malicious. These counts are source-reported and are enforced by the import tool; the complete local MNF file has not yet passed that tool.
 
 ## File and schema inspection
 
-The uploaded file is 403,328,807 bytes. The parsed file contains 600,299 lines including the header, matching 600,298 data rows.
+- File size: **403,328,807 bytes** (about 384.5 MiB).
+- Parsed line count: **600,299**, including the header; therefore 600,298 data rows.
+- Header width: **302 columns**:
+  - `sha256`: sample hash;
+  - 300 manifest/permission indicators;
+  - `Label`: class label.
+- Three separated windows were inspected (2,999 data rows total). In those windows, each row had 302 fields, labels were non-empty `Benign` / `Malware`, SHA-256 values were 64 hex characters, all 300 feature cells were 0/1, and no duplicate hash occurred within each individual window.
+- This was sampled checking only, not a full-file or global duplicate scan.
 
-The header has 302 columns:
-- `sha256`: sample hash;
-- 300 binary manifest/permission feature columns;
-- `Label`: class label.
+## Meaning and compatibility
 
-The dataset's MNF subset is based on permissions declared in AndroidManifest.xml. The 300 feature names are manifest permission/permission-related indicators, not the APK multi-view feature set used by this app.
+MNF represents binary indicators for AndroidManifest permissions/declarations. It is a distinct manifest view, not the existing 37-feature APK multi-view schema. A header-level comparison found zero exact feature-name matches with the current 37 features.
 
-### Sampled integrity checks
+The current trainer also requires a non-empty `family_group` value for group-disjoint evaluation. This CSV contains no package identity or family group; SHA-256 must not be relabelled as a group.
 
-Three separated windows were inspected: the first 999 data rows, 1,000 rows around line 300,000, and the final 1,000 rows (2,999 data rows total).
+## Full validation and LFS import tool
 
-Within those inspected windows:
-- every row had 302 comma-separated fields;
-- labels were non-empty and used `Benign` / `Malware`;
-- each SHA-256 value had 64 hexadecimal characters;
-- all 300 feature cells were `0` or `1`;
-- no duplicate SHA-256 values were observed within an individual inspected window.
+The branch includes `tools/import_andromd_datasets.py`. It streams the complete file, checks the exact frozen 302-column header/order, validates every row's field count, 64-hex SHA-256, label, and 300 binary values, rejects global duplicate hashes, enforces the published row and class counts, and computes the file SHA-256.
 
-This is a sampled check, not a full 600,298-row validation or a global duplicate scan. The sampled class mix differed substantially by window (the final 1,000 rows were all labelled `Malware`), so do not split the CSV by taking its first or last contiguous rows.
+When both MNF and ZeroOne are supplied, the tool also verifies one-to-one SHA-256 coverage and exact label agreement before staging either CSV. **The full-file scan and join check have not yet been executed**, because the raw CSVs are not yet in Git LFS.
 
-## Compatibility with the current Antivirus ALai model
+## Decision and remaining work
 
-The current trainer in `tools/train_multiview_model.py` requires the exact versioned 37-feature schema, a label column, and a non-empty `family_group` column. Its default label field is lowercase `label`; this CSV uses `Label`, which can be supplied with `--label-column Label`.
-
-A name-level comparison found **zero exact matches** between the 300 MNF feature names and the current 37 model feature names. Some permission concepts could potentially be mapped to individual model permission flags after a source-to-runtime semantic audit, but that does not fill the missing views.
-
-The current 37-feature schema also includes values that this MNF file does not provide, including APK size/target SDK and exported-component/debug state, DEX/API references, native ELF symbols, archive structure, and analysis-coverage flags.
-
-Most importantly, the CSV has no package identifier or malware-family/group identifier. `sha256` identifies a specific binary; it is not a safe substitute for package/family grouping. The current trainer requires group-disjoint train/calibration/test splits to reduce leakage. Do not rename `sha256` to `family_group`.
-
-## Decision and safe next step
-
-1. **Do not feed this file directly to the existing 37-feature trainer.** It will fail the required-schema/group checks, and inventing missing values or renaming unrelated columns would create an invalid training set.
-2. Keep this dataset as a candidate for a **separate manifest-permissions model**. That would require a separately versioned schema, matching on-device manifest feature extraction for the same 300 indicators (or a rigorously documented reduced subset), and package/family metadata for group-disjoint evaluation.
-3. Before any training, complete a full-file validation, establish package/family groups, define a documented mapping, and evaluate false-positive rate and recall on a genuinely independent holdout.
-4. Keep the production model status `NOT_CONFIGURED` until the model has been trained, independently evaluated, reviewed, and packaged. This audit does not train or activate a model.
+1. Do not feed MNF directly into the current 37-feature trainer.
+2. Complete full-file validation and push the original CSV through Git LFS.
+3. Build a separately versioned manifest feature extractor that emits the exact 300 indicators, or document and validate a justified reduced feature set.
+4. Obtain real package/family grouping metadata; do not invent it or substitute file hashes.
+5. Evaluate group-disjoint train/calibration/test splits and report false-positive rate, recall and other metrics on an untouched test set.
+6. Keep production ML **NOT_CONFIGURED** until on-device extraction parity, independent validation, and mobile resource constraints are established.
 
 ## Storage decision
 
-The owner approved keeping the complete AndroMD research CSVs with the development repository **through Git LFS only**, not as ordinary Git blobs. The root `.gitattributes` now tracks files matching `datasets/AndroMD_*.csv`; intended path for this MNF file: `datasets/AndroMD_MNF_Dataset.csv`.
+The owner approved storing the full AndroMD research CSVs in this development repository **through Git LFS only**. Root `.gitattributes` tracks `datasets/AndroMD_*.csv`; intended path for this file: `datasets/AndroMD_MNF_Dataset.csv`.
 
-At 403,328,807 bytes, this file exceeds GitHub's 100 MiB hard limit for a normal Git object. Git LFS storage and download bandwidth are quota-based, so check the account's remaining allowance before upload or repeated download. The raw MNF CSV has **not** been uploaded to the repository yet; the available GitHub write connector accepts UTF-8 text only, and the file service's binary materialization limit prevented transfer of the complete file. No placeholder LFS pointer has been created.
+The 403,328,807-byte file exceeds GitHub's 100 MiB hard limit for a normal Git object. **The raw MNF CSV is not yet in GitHub.** The GitHub connector accepts UTF-8 text rather than a 403 MB binary upload, and file materialization is limited to 100 MiB. No placeholder LFS pointer was created. The real object must be pushed using Git LFS from Termux or another Git-capable client. GitHub Free includes 10 GiB LFS storage and 10 GiB monthly download bandwidth; remaining account usage is not exposed to this connector.
 
 ## Work performed
 
-- Inspected the uploaded CSV header, total parsed line count, and three separated 1,000-line windows (the first window includes the header).
-- Compared all 300 CSV feature names against the trainer's exact 37-feature list.
-- Reviewed the current trainer and model-schema documentation.
-- No raw dataset, model artifact, generated APK, or synthetic data was added.
-- No build, test, or GitHub Actions workflow was run.
+- Inspected the CSV header, parsed line count, and three separated 1,000-line windows.
+- Compared all 300 feature names against the exact 37-feature trainer schema (zero exact matches).
+- Added exact-header and published-class-count gates to the LFS importer.
+- No raw dataset, model artifact, generated APK, training, build, test, or GitHub Actions run was performed.
