@@ -11,7 +11,7 @@
 - The Mendeley record lists the dataset under **CC BY 4.0**.
 - The accompanying research article is “AndroMD: An Android malware detection framework based on source code analysis and permission scanning,” *Results in Engineering*, Volume 28 (December 2025), DOI [10.1016/j.rineng.2025.107050](https://doi.org/10.1016/j.rineng.2025.107050).
 
-The published dataset record reports 600,298 apps: 397,814 legitimate and 202,484 malicious (66.27% / 33.73%). These class totals are source-reported; this intake did not independently recount all labels in the 184 MB CSV.
+The published dataset record reports 600,298 apps: 397,814 legitimate and 202,484 malicious (66.27% / 33.73%). These are source-reported totals and are now enforced as import validation gates; the complete uploaded CSV has not yet passed the importer.
 
 ## File and schema inspection
 
@@ -19,52 +19,41 @@ The published dataset record reports 600,298 apps: 397,814 legitimate and 202,48
 - Parsed line count: **600,299**, including the header; therefore 600,298 data rows.
 - Header width: **119 columns**:
   - `sha256`: sample hash;
-  - `TOTCLASSES`: numeric class-count field;
+  - `TOTCLASSES`: numeric field;
   - 116 token/API/key-presence indicators;
   - `Label`: class label.
-- The 116 sampled indicator fields contain binary values (0/1). `TOTCLASSES` is numeric and must not be treated as a binary flag.
-- The labels observed in inspected rows are `Benign` and `Malware`.
+- Four separated rows were inspected; all 116 indicator values were binary (0/1), `TOTCLASSES` was an integer, SHA-256 values had 64 hex characters, and labels were `Benign` or `Malware`.
 
-### Sampled integrity checks
+### Meaning and extraction semantics
 
-Four separated records were inspected (first data row, a middle row, and the final two rows). Each inspected row had:
-- exactly 119 comma-separated fields;
-- a 64-character hexadecimal SHA-256;
-- 116 feature cells restricted to 0/1;
-- a numeric `TOTCLASSES` value;
-- a non-empty `Benign` or `Malware` label.
-
-This is a **sample check only**, not a full-file validation, complete missing-value scan, or global duplicate-SHA scan. The paper describes the source records as free of duplicates and missing values, but that statement has not been independently verified against every row of this uploaded copy.
-
-## What ZeroOne represents
-
-The paper describes ZeroOne as binary presence/absence indicators derived from keywords and method/API patterns found in decompiled Java code. It is a code-token/static-source view of an APK, not a manifest-permission-only dataset. This makes it complementary to the AndroMD MNF subset previously uploaded.
-
-The paper states that the three AndroMD subsets share the same record sequence and SHA-256/label information. If both ZeroOne and MNF are retained, a future merge may be possible, but the implementation must still verify every corresponding SHA-256 and label before joining; the published statement alone is not a row-level merge proof.
+The paper describes ZeroOne as presence/absence indicators derived from selected keywords and method/API patterns found in decompiled Java code: a key is 1 when present in the source and 0 otherwise. The research pipeline processes APK DEX/code, extracts Java classes, and searches the resulting source representation. This is not equivalent to simply checking arbitrary DEX strings or mapping the columns to the app's existing 37 features. The exact matching rules and frozen feature order must be replicated before any production extractor is approved.
 
 ## Compatibility with the current Antivirus ALai model
 
-The current trainer in `tools/train_multiview_model.py` requires the exact versioned 37-feature schema, a label column, and a non-empty `family_group` column. Its default label field is lowercase `label`; this CSV uses `Label`, which could be selected with `--label-column Label`, but that does not solve the feature mismatch.
+The current trainer in `tools/train_multiview_model.py` requires the exact versioned 37-feature schema and a non-empty `family_group` column. Its default label field is lowercase `label`; this CSV uses `Label`.
 
-A header-level comparison found **zero exact feature-name matches** between the 117 ZeroOne feature columns and the current 37 model features.
+A header-level comparison found **zero exact feature-name matches** between the 117 ZeroOne data columns (116 binary indicators plus `TOTCLASSES`) and the current 37 model features. ZeroOne therefore needs its own versioned schema and model pipeline, or a carefully designed multi-view model with separately extracted features. Renaming columns or filling missing fields with guessed values would invalidate training.
 
-The current 37-feature model expects APK/package metadata, specific permission flags, selected DEX/API evidence, native ELF symbols, archive structure, and analysis-coverage flags. ZeroOne instead records its own keyword-presence vector and `TOTCLASSES`. These are different feature definitions and extraction semantics; renaming the columns or filling absent columns with guessed values would invalidate the training data.
+The CSV has no dedicated package identifier or malware-family/group identifier. `PKG_NAME` is one of the binary feature names, not a package identity value. SHA-256 identifies a file, not a package/family group.
 
-The CSV has no dedicated package identifier or malware-family/group identifier. `PKG_NAME` is one of the binary key columns, not a package identity value. `sha256` identifies an individual file and is not a safe substitute for a package/family group.
+## Full validation and LFS import tool
 
-## Decision and safe integration path
+The branch now includes `tools/import_andromd_datasets.py`. It performs a streaming full-file parse, locks the exact frozen header/order for ZeroOne and MNF, checks every row's field count, 64-hex SHA-256, label, binary feature domain and ZeroOne `TOTCLASSES`, rejects duplicate hashes, enforces the published 600,298-row and class totals, and computes a full-file SHA-256.
 
-1. **Do not pass this CSV to the existing 37-feature trainer.**
-2. Preserve it as a candidate for a separately versioned ZeroOne model schema (117 input fields: one numeric `TOTCLASSES` value plus 116 binary indicators), with documented extraction semantics that can be reproduced from APK/DEX on-device.
-3. Validate all 600,298 rows, including field counts, numeric/binary domains, labels, missing values, and global SHA-256 uniqueness.
-4. Obtain package/family grouping metadata from a reliable source. Do not synthesize groups or rename SHA-256 as a group identifier.
-5. If combining ZeroOne with MNF, join only after checking all SHA-256 and label pairs. Record the joined schema and its exact feature order.
-6. Train and evaluate with package/family-disjoint train, calibration, and untouched test groups. Report false-positive rate, recall, precision, F1, ROC-AUC, PR-AUC, class counts, and group counts.
-7. Keep the production model state **NOT_CONFIGURED** until the matching extractor, full validation, independent evaluation, and model packaging are complete.
+When both CSVs are supplied, it additionally requires exact one-to-one SHA-256 coverage and identical labels before staging either file. It stages only the supplied CSVs under the root Git LFS rule. **This full validation and cross-dataset join check have not yet been run**, because the raw files have not been pushed from a Git LFS-capable client.
+
+## Decision and remaining work
+
+1. Do not pass this CSV to the current 37-feature trainer.
+2. Complete full-file validation and commit the actual binary through Git LFS.
+3. Obtain reliable package/family grouping metadata. Never substitute SHA-256 as `family_group`.
+4. Recover and document the exact source feature-matching rules and reproduce them in an on-device DEX/code extractor.
+5. Train with package/family-disjoint train, calibration, and untouched test groups; report FPR, recall, precision, F1, ROC-AUC and PR-AUC.
+6. Keep production ML **NOT_CONFIGURED** until extraction parity, independent metrics, mobile resource tests, and model signing/packaging are complete.
 
 ## Licence and attribution
 
-The source record lists CC BY 4.0. That licence permits commercial reuse and adaptation subject to attribution, a link to the licence, and indicating changes. Preserve the source title, contributors, DOI, licence link, and a clear statement that Antivirus ALai is not endorsed by the dataset authors. Review the complete licence and source record before any redistribution.
+The Mendeley record lists CC BY 4.0, which permits commercial reuse/adaptation subject to attribution, licence link, and notice of changes. Preserve the source title, contributors, DOI, licence link, and state that Antivirus ALai is not endorsed by the authors. Review upstream rights and the source record before redistribution.
 
 Suggested attribution:
 
@@ -72,16 +61,14 @@ Suggested attribution:
 
 ## Git LFS storage
 
-The file is 175.58 MiB, above GitHub's 100 MiB hard limit for an ordinary Git object. The repository now has a targeted Git LFS rule for `datasets/AndroMD_*.csv`; the intended repository path is `datasets/AndroMD_ZeroOne_Dataset.csv`.
+The ZeroOne file is 175.58 MiB, above GitHub's 100 MiB hard limit for an ordinary Git object. Root `.gitattributes` tracks `datasets/AndroMD_*.csv` through Git LFS. Intended path: `datasets/AndroMD_ZeroOne_Dataset.csv`.
 
-**The raw CSV has not been uploaded to GitHub yet.** The connected GitHub file-write operation accepts UTF-8 text only, and the file service could not materialize this 184 MB upload because its per-file materialization limit is 100 MiB. Do not create a fake LFS pointer or claim the binary is present. The actual LFS object still needs to be pushed from a Git LFS-capable client. Git LFS storage/bandwidth quotas must be checked before repeated downloads or updates.
+**The raw CSV has not been uploaded to GitHub yet.** The connector cannot write a 184 MB binary LFS object and the file service cannot materialize files larger than 100 MiB. No fake LFS pointer has been created. The actual LFS object still needs to be pushed from Termux or another Git LFS-capable client. GitHub Free includes 10 GiB LFS storage and 10 GiB monthly download bandwidth; the account's remaining balance is not visible from this connector.
 
 ## Work performed
 
-- Read the CSV header and confirmed 119 columns.
-- Confirmed 600,299 parsed lines including the header.
-- Inspected four separated data rows and checked their field count, SHA-256 shape, 116 binary indicator values, numeric `TOTCLASSES`, and labels.
-- Compared all 117 ZeroOne feature-column names with the trainer's exact 37-feature list.
-- Reviewed the repository's trainer/schema documentation and the published AndroMD dataset/article descriptions.
-- Added Git LFS tracking configuration for AndroMD CSVs under `datasets/`.
-- No raw CSV, model artifact, or synthetic data was committed. No training, build, test, or GitHub Actions workflow was run.
+- Confirmed attachment size, line count and 119-column header.
+- Inspected four separated records.
+- Compared all 117 data columns with the current trainer's 37 feature names (zero exact matches).
+- Added exact-header and published-class-count gates to the importer.
+- No raw CSV, trained model, synthetic data, APK, build, test, or GitHub Actions run was added/performed.
