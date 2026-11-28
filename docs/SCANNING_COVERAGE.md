@@ -1,6 +1,6 @@
 # Scanning coverage and known limitations
 
-Reviewed: 2026-11-26
+Reviewed: 2026-11-28
 
 ## File coverage limits
 
@@ -44,9 +44,9 @@ The visible protection service watches only selected common shared-storage direc
 
 The Android client is pinned to:
 
-`https://raw.githubusercontent.com/karafarin12800-del/ANTIVIRUS-AL-Ai/security-feed/threat-feed/latest.alfeed`
+`https://raw.githubusercontent.com/zojajiali4-cpu/ANTIVIRUS-AL-Ai/security-feed/threat-feed/latest.alfeed`
 
-As of this review, the repository has no `security-feed` branch, so that URL has no published signed feed. The client must report threat intelligence as unavailable until a valid feed is published and installed. An unavailable feed is never equivalent to a clean verdict.
+As of 2026-11-28, the active repository has no `security-feed` branch, so that URL has no published signed feed yet. The URL has been aligned with the current repository owner, but the publisher still has not produced a feed object. The client must report threat intelligence as unavailable until a valid, signed, non-expired feed is published and installed. An unavailable feed is never equivalent to a clean verdict.
 
 The feed publisher must not be activated for commercial distribution until the enabled providers' current terms and required paid/commercial permissions have been verified. A configured signing key alone does not populate a malware database.
 
