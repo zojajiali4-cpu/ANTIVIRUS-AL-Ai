@@ -16,15 +16,36 @@ import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
 
+data class ScanBatchContext internal constructor(
+    val contentBundle: com.antivirusalai.intel.SignedContentRuleBundle?,
+    val contentRuleState: ContentRuleBundleState,
+    val threatFeed: com.antivirusalai.intel.SignedThreatFeed?,
+    val threatFeedStatus: com.antivirusalai.intel.ThreatFeedStatus
+)
+
 class ScanTooLargeException(message: String) : Exception(message)
 
 object ScanEngine {
     const val MAX_FILE_SIZE_BYTES = 200L * 1024L * 1024L
 
+    /** Capture one verified intelligence snapshot for an entire multi-file run. */
+    fun prepareBatchContext(context: Context): ScanBatchContext {
+        val appContext = context.applicationContext
+        val bundle = runCatching { ContentRuleBundleRuntime.current(appContext) }.getOrNull()
+        val ruleState = if (bundle != null) ContentRuleBundleState.CURRENT
+        else runCatching { ContentRuleBundleRuntime.state(appContext) }.getOrDefault(ContentRuleBundleState.INVALID)
+        val feed = runCatching { ThreatFeedRuntime.currentFeed(appContext) }.getOrNull()
+        val feedStatus = runCatching { ThreatFeedRuntime.status(appContext) }.getOrElse {
+            com.antivirusalai.intel.ThreatFeedStatus(ThreatFeedFreshness.UNAVAILABLE, "STATUS_READ_FAILED")
+        }
+        return ScanBatchContext(bundle, ruleState, feed, feedStatus)
+    }
+
     suspend fun scan(
         context: Context,
         uri: Uri,
-        persistUnknownCase: Boolean = true
+        persistUnknownCase: Boolean = true,
+        batchContext: ScanBatchContext? = null
     ): ScanResult = withContext(Dispatchers.IO) {
         val resolver = context.contentResolver
         val localFile = if (uri.scheme == "file") uri.path?.let(::File) else null
@@ -65,8 +86,18 @@ object ScanEngine {
         val digest = MessageDigest.getInstance("SHA-256")
         var totalBytes = 0L
         val startedAt = System.nanoTime()
-        val contentBundleStage = ScanStageRunner.execute("CONTENT_RULE_BUNDLE") {
-            ContentRuleBundleRuntime.current(context.applicationContext)
+        val preparedContentBundle = if (batchContext == null) null else {
+            batchContext.contentBundle?.takeIf { it.expiresAtEpochSeconds > System.currentTimeMillis() / 1000L }
+        }
+        val effectiveContentRuleState = if (
+            batchContext != null && batchContext.contentBundle != null && preparedContentBundle == null
+        ) ContentRuleBundleState.EXPIRED else batchContext?.contentRuleState
+        val contentBundleStage = if (batchContext == null) {
+            ScanStageRunner.execute("CONTENT_RULE_BUNDLE") {
+                ContentRuleBundleRuntime.current(context.applicationContext)
+            }
+        } else {
+            ScanStageExecution("CONTENT_RULE_BUNDLE", ScanStageState.COMPLETED, preparedContentBundle)
         }
         val contentBundle = contentBundleStage.value
         val nativeInitStage = ScanStageRunner.execute("NATIVE_ENGINE_INIT") {
@@ -176,8 +207,16 @@ object ScanEngine {
                 )
             }
             if (contentBundle == null) {
-                val stateStage = ScanStageRunner.execute("CONTENT_RULE_BUNDLE_STATE") {
-                    ContentRuleBundleRuntime.state(context.applicationContext)
+                val stateStage = if (batchContext == null) {
+                    ScanStageRunner.execute("CONTENT_RULE_BUNDLE_STATE") {
+                        ContentRuleBundleRuntime.state(context.applicationContext)
+                    }
+                } else {
+                    ScanStageExecution(
+                        "CONTENT_RULE_BUNDLE_STATE",
+                        ScanStageState.COMPLETED,
+                        effectiveContentRuleState ?: ContentRuleBundleState.INVALID
+                    )
                 }
                 ScanStageRunner.failureEvidence(stateStage)?.let(evidence::add)
                 val state = stateStage.value ?: ContentRuleBundleState.INVALID
@@ -245,13 +284,30 @@ object ScanEngine {
             ScanStageRunner.failureEvidence(eicarStage)?.let(evidence::add)
             val eicarMatch = eicarStage.value == true
 
-            val threatFeedStage = ScanStageRunner.execute("SIGNED_THREAT_FEED_READ") {
-                ThreatFeedRuntime.currentFeed(context.applicationContext)
+            val preparedThreatFeed = if (batchContext == null) null else {
+                batchContext.threatFeed?.takeIf { it.expiresAtEpochSeconds > System.currentTimeMillis() / 1000L }
+            }
+            val effectiveThreatFeedStatus = when {
+                batchContext == null -> null
+                batchContext.threatFeed != null && preparedThreatFeed == null ->
+                    com.antivirusalai.intel.ThreatFeedStatus(ThreatFeedFreshness.STALE, "FEED_EXPIRED_DURING_SCAN")
+                else -> batchContext.threatFeedStatus
+            }
+            val threatFeedStage = if (batchContext == null) {
+                ScanStageRunner.execute("SIGNED_THREAT_FEED_READ") {
+                    ThreatFeedRuntime.currentFeed(context.applicationContext)
+                }
+            } else {
+                ScanStageExecution("SIGNED_THREAT_FEED_READ", ScanStageState.COMPLETED, preparedThreatFeed)
             }
             ScanStageRunner.failureEvidence(threatFeedStage)?.let(evidence::add)
             val currentThreatFeed = threatFeedStage.value
-            val threatFeedStatusStage = ScanStageRunner.execute("SIGNED_THREAT_FEED_STATUS") {
-                ThreatFeedRuntime.status(context.applicationContext)
+            val threatFeedStatusStage = if (batchContext == null) {
+                ScanStageRunner.execute("SIGNED_THREAT_FEED_STATUS") {
+                    ThreatFeedRuntime.status(context.applicationContext)
+                }
+            } else {
+                ScanStageExecution("SIGNED_THREAT_FEED_STATUS", ScanStageState.COMPLETED, effectiveThreatFeedStatus)
             }
             ScanStageRunner.failureEvidence(threatFeedStatusStage)?.let(evidence::add)
             val threatFeedStatus = threatFeedStatusStage.value

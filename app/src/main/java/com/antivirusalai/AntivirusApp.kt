@@ -1287,7 +1287,7 @@ private fun DashboardScreen(
                     modifier = Modifier.weight(1f),
                     icon = "file",
                     title = tr(fa, "اسکن سریع", "Quick scan"),
-                    caption = tr(fa, "محدوده مجاز حافظه", "Accessible storage scope"),
+                    caption = tr(fa, "برنامه‌ها و پوشه‌های پرخطر", "Apps + high-risk folders"),
                     onClick = onFileScan
                 )
                 QuickActionCard(
@@ -2216,7 +2216,7 @@ private fun ScanCenterScreen(
             EyebrowLabel(tr(fa, "تحلیل محلی", "ON-DEVICE ANALYSIS"))
             Text(tr(fa, "مرکز اسکن", "Scan center"), color = TextPrimary, fontSize = 25.sp, fontWeight = FontWeight.Bold)
             Text(
-                tr(fa, "بدون انتخاب پوشه؛ اسکن سریع یا عمیق را انتخاب کن تا فایل‌های قابل‌دسترسی خودکار بررسی شوند.", "No folder picker. Choose quick or deep scan to inspect accessible device storage automatically."),
+                tr(fa, "بدون انتخاب پوشه؛ اسکن سریع برای نقاط پرخطر است و اسکن عمیق تمام محدوده قابل‌دسترسی را بررسی می‌کند.", "No folder picker. Quick scan focuses on priority locations; Deep scan inspects the full accessible scope."),
                 color = TextSecondary,
                 fontSize = 12.sp
             )
@@ -2225,7 +2225,7 @@ private fun ScanCenterScreen(
         ScanModeCard(
             icon = "file",
             title = tr(fa, "اسکن سریع", "Quick scan"),
-            description = tr(fa, "همه فایل‌های قابل‌فهرست‌برداری در حافظه مشترکِ مجاز و مسیرهای قابل‌خواندن برنامه‌های نصب‌شده پایش می‌شوند؛ مواردی که تحلیل نمی‌شوند جداگانه شمرده خواهند شد.", "Inspects all listable files in permitted shared storage and readable installed-app paths; files that cannot be analyzed are counted separately."),
+            description = tr(fa, "برای شروع سریع، APKهای قابل‌خواندن برنامه‌های نصب‌شده و پوشه‌های Download، Downloads، Documents، Bluetooth و Android/media بررسی می‌شوند؛ سقف این مرحله ۱٬۵۰۰ فایل یا ۵۱۲ مگابایت است. برای بررسی همه فایل‌های قابل‌دسترسی، اسکن عمیق را اجرا کن.", "Fast triage checks readable installed-app APKs and Download, Downloads, Documents, Bluetooth and Android/media. It is capped at 1,500 files or 512 MiB. Run Deep scan for all accessible shared-storage files."),
             tag = tr(fa, "قابل استفاده", "AVAILABLE"),
             enabled = !scanning,
             onClick = onFileScan
@@ -2499,6 +2499,18 @@ private fun BatchScanSummaryCard(
     Card(shape = RoundedCornerShape(21.dp), colors = CardDefaults.cardColors(containerColor = SurfaceBase)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
             Text(if (deep) tr(fa, "نتیجه اسکن عمیق", "Deep scan results") else tr(fa, "نتیجه اسکن سریع", "Quick scan results"), color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            if (!deep) {
+                Text(
+                    tr(
+                        fa,
+                        "این مرحله عمداً روی برنامه‌های نصب‌شده و پوشه‌های پرخطر تمرکز می‌کند؛ فایل‌های سایر پوشه‌ها در اسکن سریع بررسی نشده‌اند. برای پوشش گستردهٔ حافظه، اسکن عمیق را اجرا کن.",
+                        "This quick pass intentionally focuses on installed apps and priority folders. Files in other folders are not covered by Quick scan; use Deep scan for broader storage coverage."
+                    ),
+                    color = ColorWarning,
+                    fontSize = 10.sp,
+                    lineHeight = 15.sp
+                )
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 MetricMini(Modifier.weight(1f), tr(fa, "فایل تحلیل‌شده", "Analyzed files"), report.scannedCount.toString())
                 MetricMini(Modifier.weight(1f), tr(fa, "بدافزار شناخته‌شده", "Known malware"), report.knownMalwareCount.toString())
@@ -2515,8 +2527,8 @@ private fun BatchScanSummaryCard(
             Text(
                 tr(
                     fa,
-                    "پیشرفت پایش محدوده مجاز: ${report.completionPercent}% • تحلیل موفق: ${report.scanCoveragePercent}% • تهدید/مشکوک: ${report.suspiciousCount} • نامشخص: ${report.unknownCount}",
-                    "Accessible-scope completion: ${report.completionPercent}% • successfully analyzed: ${report.scanCoveragePercent}% • threat/review findings: ${report.suspiciousCount} • unknown: ${report.unknownCount}"
+                    "پیشرفت محدوده اسکن: ${report.completionPercent}% • تحلیل موفق: ${report.scanCoveragePercent}% • تهدید/مشکوک: ${report.suspiciousCount} • نامشخص: ${report.unknownCount}",
+                    "Scan-scope completion: ${report.completionPercent}% • successfully analyzed: ${report.scanCoveragePercent}% • threat/review findings: ${report.suspiciousCount} • unknown: ${report.unknownCount}"
                 ),
                 color = if (report.fullScanCoverage) ColorSuccess else ColorWarning,
                 fontSize = 11.sp,

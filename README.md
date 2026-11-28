@@ -8,7 +8,7 @@ Privacy-first Android security scanner. Current Android milestone: **0.3.0 (vers
 
 ## Implemented security layers
 
-- Bounded device scanning: quick scan up to 100,000 files/25 GiB; deep and user-selected folder scans up to 100,000 files/25 GiB; 200 MiB per file. These are traversal limits, not detection-coverage guarantees. Results disclose skipped files and incomplete coverage.
+- Bounded device scanning: quick triage checks readable installed APK components and priority folders (Download, Downloads, Documents, Bluetooth, Android/media), up to 1,500 files/512 MiB; deep and user-selected folder scans cover the full Android-accessible scope up to 100,000 files/25 GiB; 200 MiB per file. Quick scan is not a full-storage scan. Results disclose skipped files and incomplete coverage.
 - EICAR harmless antivirus test-string detection for scanner regression checks. EICAR is not live malware and is never described as malware.
 - A native C++ Aho-Corasick multi-pattern matcher is wired into the bounded file-read pass through JNI. It accepts reviewed patterns from a signed, expiring offline content-rule bundle; until a production bundle is published, only the harmless built-in self-test rule is active.
 - Bounded ZIP/APK structure analysis, DEX header validation, selected static API-reference checks, and ELF header/symbol inspection. No archive entry or native library is extracted for execution.
@@ -47,7 +47,7 @@ Android uses SHA-256 entries for local file reputation. It parses network IOCs s
 
 ## Scanning coverage and current detection limits
 
-- Quick device scan: up to 100,000 files / 25 GiB.
+- Quick device scan: priority locations only, up to 1,500 files / 512 MiB; deep scan is required for the full accessible-storage scope.
 - Deep device scan and user-selected folder scan: up to 100,000 files / 25 GiB.
 - Maximum individual file size: 200 MiB.
 - Android-protected private app locations remain inaccessible and excluded.

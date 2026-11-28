@@ -53,8 +53,23 @@ object DeviceScanEngine {
         }
         val candidates = linkedMapOf<String, File>()
         val maxFiles = if (deep) DEEP_FILE_LIMIT else QUICK_FILE_LIMIT
+        val maxDirectoryVisits = if (deep) MAX_DIRECTORY_VISITS else ScanLimits.QUICK_DIRECTORY_VISITS
         var traversalLimitReached = !hasStorageAccess
         var discoverySkipped = 0
+        var directoryVisitsForProgress = 0
+        var lastInventoryProgressAt = 0L
+
+        suspend fun publishInventoryProgress(force: Boolean = false) {
+            val now = System.currentTimeMillis()
+            if (!force && now - lastInventoryProgressAt < 750L) return
+            lastInventoryProgressAt = now
+            val label = if (deep) {
+                "Indexing full accessible storage: ${candidates.size} files · ${directoryVisitsForProgress} folders"
+            } else {
+                "Indexing priority locations: ${candidates.size} files · ${directoryVisitsForProgress} folders"
+            }
+            withContext(Dispatchers.Main.immediate) { onProgress(0, 0, label) }
+        }
 
         fun addCandidate(file: File, allowedRoot: File) {
             if (candidates.size >= maxFiles || !file.isFile) return
@@ -88,6 +103,7 @@ object DeviceScanEngine {
         val packageDiscovery = addInstalledApplicationPackages(context, candidates, failures, maxFiles)
         discoverySkipped += packageDiscovery.skippedComponents
         if (packageDiscovery.incomplete) traversalLimitReached = true
+        publishInventoryProgress(force = true)
 
         if (hasStorageAccess && roots.isEmpty()) {
             failures += FolderScanFailure("Shared storage", "No readable shared-storage root was available.")
@@ -112,10 +128,11 @@ object DeviceScanEngine {
             while (queue.isNotEmpty() && candidates.size < maxFiles) {
                 currentCoroutineContext().ensureActive()
                 directoryVisits++
-                if (directoryVisits > MAX_DIRECTORY_VISITS) {
+                directoryVisitsForProgress++
+                if (directoryVisits > maxDirectoryVisits) {
                     failures += FolderScanFailure(
                         rootCanonical.name,
-                        "Device scan stopped after the 20,000-directory safety limit."
+                        "Device scan stopped after the $maxDirectoryVisits-directory safety limit."
                     )
                     traversalLimitReached = true
                     break
@@ -157,24 +174,25 @@ object DeviceScanEngine {
                     traversalLimitReached = true
                     continue
                 }
-                children.forEach { child ->
+                val orderedChildren = if (deep) children.toList()
+                else QuickScanPolicy.orderChildren(rootCanonical, canonical, children)
+                orderedChildren.forEach { child ->
                     if (candidates.size >= maxFiles) return@forEach
                     if (child.isDirectory) {
-                        if (!isProtectedDirectory(rootCanonical, child)) {
-                            if (queue.size < ScanLimits.MAX_PENDING_DIRECTORIES) {
-                                queue.add(child to depth + 1)
-                            } else {
-                                failures += FolderScanFailure(
-                                    child.name,
-                                    "Pending-directory safety limit reached; this part of the tree was not enumerated."
-                                )
-                                traversalLimitReached = true
-                            }
+                        if (isProtectedDirectory(rootCanonical, child)) return@forEach
+                        if (!deep && !QuickScanPolicy.shouldVisitDirectory(rootCanonical, child)) return@forEach
+                        if (queue.size < ScanLimits.MAX_PENDING_DIRECTORIES) {
+                            queue.add(child to depth + 1)
+                        } else {
+                            failures += FolderScanFailure(
+                                child.name,
+                                "Pending-directory safety limit reached; this part of the tree was not enumerated."
+                            )
+                            traversalLimitReached = true
                         }
-                    } else {
-                        addCandidate(child, rootCanonical)
-                    }
+                    } else addCandidate(child, rootCanonical)
                 }
+                publishInventoryProgress()
             }
             if (candidates.size >= maxFiles) {
                 traversalLimitReached = true
@@ -198,7 +216,9 @@ object DeviceScanEngine {
         val list = candidates.values.toList()
         val discoveredFiles = list.size + discoverySkipped
         val totalByteLimit = if (deep) DEEP_TOTAL_BYTES else QUICK_TOTAL_BYTES
+        val batchContext = ScanEngine.prepareBatchContext(context.applicationContext)
         var budgetExhausted = false
+        var lastScanProgressAt = 0L
         val pendingUnknownCases = mutableListOf<UnknownFileCase>()
 
         fun flushUnknownCases() {
@@ -231,7 +251,8 @@ object DeviceScanEngine {
                     val result = ScanEngine.scan(
                         context.applicationContext,
                         Uri.fromFile(file),
-                        persistUnknownCase = false
+                        persistUnknownCase = false,
+                        batchContext = batchContext
                     )
                     result.unknownFileCase?.let(pendingUnknownCases::add)
                     if (pendingUnknownCases.size >= UNKNOWN_CASE_BATCH_SIZE) flushUnknownCases()
@@ -270,13 +291,11 @@ object DeviceScanEngine {
             // Discovery-time skips were already accounted for. Do not show 100%
             // until the final directory traversal status is known.
             val accountedSoFar = discoverySkipped + index + 1
-            if (index == 0 || (index + 1) % 5 == 0 || index == list.lastIndex) {
-                val liveCurrent = if (discoveredFiles > 0) {
-                    accountedSoFar.coerceAtMost(discoveredFiles - 1)
-                } else 0
-                withContext(Dispatchers.Main.immediate) {
-                    onProgress(liveCurrent, discoveredFiles, file.name)
-                }
+            val now = System.currentTimeMillis()
+            if (index == 0 || now - lastScanProgressAt >= 500L || index == list.lastIndex) {
+                lastScanProgressAt = now
+                val liveCurrent = if (discoveredFiles > 0) accountedSoFar.coerceAtMost(discoveredFiles - 1) else 0
+                withContext(Dispatchers.Main.immediate) { onProgress(liveCurrent, discoveredFiles, file.name) }
             }
 
             if (totalBytes >= totalByteLimit && index < list.lastIndex) {

@@ -12,11 +12,13 @@ class ScanLimitsTest {
     }
 
     @Test
-    fun quickScanUsesTheSameFullScopeSafetyEnvelopeInsteadOfA350FileShortcut() {
-        assertEquals(ScanLimits.DEEP_FILE_LIMIT, ScanLimits.QUICK_FILE_LIMIT)
-        assertEquals(ScanLimits.DEEP_TOTAL_BYTES, ScanLimits.QUICK_TOTAL_BYTES)
-        assertTrue(ScanLimits.QUICK_FILE_LIMIT >= 60_000)
-        assertTrue(ScanLimits.QUICK_TOTAL_BYTES >= 20L * 1024L * 1024L * 1024L)
+    fun quickScanUsesABoundedPriorityEnvelopeAndDeepScanKeepsFullCoverage() {
+        assertTrue(ScanLimits.QUICK_FILE_LIMIT in 1_000..5_000)
+        assertTrue(ScanLimits.QUICK_TOTAL_BYTES <= 1L * 1024L * 1024L * 1024L)
+        assertTrue(ScanLimits.QUICK_FILE_LIMIT < ScanLimits.DEEP_FILE_LIMIT)
+        assertTrue(ScanLimits.QUICK_TOTAL_BYTES < ScanLimits.DEEP_TOTAL_BYTES)
+        assertTrue(ScanLimits.DEEP_FILE_LIMIT >= 60_000)
+        assertTrue(ScanLimits.DEEP_TOTAL_BYTES >= 20L * 1024L * 1024L * 1024L)
     }
 
     @Test
