@@ -50,7 +50,7 @@ object QuarantineVault {
     private const val TAG_BITS = 128
     private val idPattern = Regex("[0-9a-fA-F-]{36}")
     private val hashPattern = Regex("[0-9a-f]{64}")
-    private val mimeTypePattern = Regex("[A-Za-z0-9!#    private val hashPattern = Regex("[0-9a-f]{64}")
+    private val mimeTypePattern = Regex("[A-Za-z0-9._+-]{1,64}/[A-Za-z0-9._+-]{1,64}")
 ^_.+-]{1,64}/[A-Za-z0-9!#    private val hashPattern = Regex("[0-9a-f]{64}")
 ^_.+-]{1,64}")
 
