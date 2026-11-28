@@ -129,6 +129,7 @@ private enum class MainTab(val key: String) {
     HOME("home"),
     SCAN("scan"),
     TOOLS("tools"),
+    CLEANER("cleaner"),
     STORE("store"),
     SETTINGS("settings"),
     VAULT("vault")
@@ -260,9 +261,16 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
 
                 scanCurrent = progressData.getInt(DeviceScanWorker.KEY_CURRENT, scanCurrent)
                 scanTotal = progressData.getInt(DeviceScanWorker.KEY_TOTAL, scanTotal)
-                scanProgress = if (scanTotal > 0) {
+                val scopeComplete = progressData.getBoolean(DeviceScanWorker.KEY_SCOPE_COMPLETE, false)
+                val reportedRatio = if (scanTotal > 0) {
                     (scanCurrent.toFloat() / scanTotal.toFloat()).coerceIn(0f, 1f)
-                } else if (info.state == WorkInfo.State.SUCCEEDED) 1f else 0f
+                } else 0f
+                scanProgress = when {
+                    info.state == WorkInfo.State.SUCCEEDED && scopeComplete -> 1f
+                    info.state == WorkInfo.State.SUCCEEDED -> reportedRatio.coerceAtMost(0.99f)
+                    active -> reportedRatio.coerceAtMost(0.99f)
+                    else -> reportedRatio
+                }
 
                 when (info.state) {
                     WorkInfo.State.ENQUEUED, WorkInfo.State.RUNNING, WorkInfo.State.BLOCKED -> {
@@ -617,16 +625,22 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
                                 protectionEnabled = protectionEnabled,
                                 onToggleProtection = toggleProtection,
                                 onOpenScan = { activeTab = MainTab.SCAN.key },
-                                onOpenVault = { activeTab = MainTab.VAULT.key }
+                                onOpenVault = { activeTab = MainTab.VAULT.key },
+                                onOpenCleaner = { activeTab = MainTab.CLEANER.key }
+                            )
+
+                            MainTab.CLEANER.key -> CleanerScreen(
+                                fa = fa,
+                                onBack = { activeTab = MainTab.TOOLS.key }
                             )
 
                             MainTab.VAULT.key -> QuarantineVaultScreen(
                                 fa = fa,
                                 refreshKey = vaultRefresh,
                                 onDelete = { id ->
-                                    if (QuarantineVault.delete(context.applicationContext, id)) {
-                                        vaultRefresh++
-                                    }
+                                    val deleted = QuarantineVault.delete(context.applicationContext, id)
+                                    if (deleted) vaultRefresh++
+                                    deleted
                                 }
                             )
 
@@ -663,8 +677,8 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
                         Text(
                             tr(
                                 fa,
-                                "ANTIVIRUS AL AI  •  نسخه آزمایشی ${BuildConfig.VERSION_NAME}",
-                                "ANTIVIRUS AL AI  •  DEVELOPMENT BUILD ${BuildConfig.VERSION_NAME}"
+                                "Antivirus ALai  •  نسخه آزمایشی ${BuildConfig.VERSION_NAME}",
+                                "Antivirus ALai  •  DEVELOPMENT BUILD ${BuildConfig.VERSION_NAME}"
                             ),
                             color = TextTertiary,
                             fontSize = 10.sp,
@@ -682,7 +696,7 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
         AlertDialog(
             onDismissRequest = { selectedPlan = null },
             containerColor = SurfaceRaised,
-            title = { Text(tr(fa, "فروشگاه ANTIVIRUS AL AI", "ANTIVIRUS AL AI Store"), color = TextPrimary) },
+            title = { Text(tr(fa, "فروشگاه Antivirus ALai", "Antivirus ALai Store"), color = TextPrimary) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
                     Text(
@@ -693,8 +707,8 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
                     Text(
                         tr(
                             fa,
-                            "پرداخت Google Play و مدیریت اشتراک هنوز متصل نشده‌اند. هیچ مبلغی دریافت یا اشتراکی فعال نمی‌شود. این بخش فعلاً پیش‌نمایش طرح‌هاست.",
-                            "Google Play Billing and subscription management are not connected yet. No payment or subscription activation will occur. This is currently a plan preview."
+                            "پرداخت درون‌برنامه‌ای کافه‌بازار و مدیریت اشتراک هنوز متصل نشده‌اند. هیچ مبلغی دریافت یا اشتراکی فعال نمی‌شود. این بخش فعلاً پیش‌نمایش طرح‌هاست.",
+                            "Cafe Bazaar in-app billing and subscription management are not connected yet. No payment or subscription activation will occur. This is currently a plan preview."
                         ),
                         color = TextSecondary
                     )
@@ -720,8 +734,8 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
                         Text(
                             tr(
                                 fa,
-                                "برای پشتیبانی، گزارش اشکال یا پیشنهادهای مربوط به ANTIVIRUS AL AI از ایمیل رسمی زیر استفاده کن:",
-                                "For support, bug reports, or suggestions about ANTIVIRUS AL AI, use the official email below:"
+                                "برای پشتیبانی، گزارش اشکال یا پیشنهادهای مربوط به Antivirus ALai از ایمیل رسمی زیر استفاده کن:",
+                                "For support, bug reports, or suggestions about Antivirus ALai, use the official email below:"
                             ),
                             color = TextSecondary
                         )
@@ -734,7 +748,7 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
                                 .clickable {
                                     val intent = Intent(Intent.ACTION_SENDTO).apply {
                                         data = Uri.parse("mailto:$SUPPORT_EMAIL")
-                                        putExtra(Intent.EXTRA_SUBJECT, "ANTIVIRUS AL AI Support")
+                                        putExtra(Intent.EXTRA_SUBJECT, "Antivirus ALai Support")
                                     }
                                     try {
                                         context.startActivity(intent)
@@ -958,7 +972,7 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
         AlertDialog(
             onDismissRequest = { showAbout = false },
             containerColor = SurfaceRaised,
-            title = { Text("ANTIVIRUS AL AI", color = TextPrimary) },
+            title = { Text("Antivirus ALai", color = TextPrimary) },
             text = {
                 Text(
                     tr(
@@ -987,7 +1001,7 @@ fun AntivirusApp(inPictureInPicture: Boolean = false) {
                     tr(
                         fa,
                         "ابتدا یک نسخه رمزنگاری‌شده AES-GCM ساخته و هش آن تأیید می‌شود؛ سپس برنامه فقط از Android یا ارائه‌دهنده فایل درخواست حذف فایل مبدأ را می‌کند. حذف ممکن است به‌دلیل محدودیت مجوز ناموفق باشد. این عملیات برنامه نصب‌شده را uninstall نمی‌کند و حذف امن فیزیکی روی حافظه فلش تضمین‌پذیر نیست.",
-                        "ANTIVIRUS AL AI first creates and verifies an AES-GCM encrypted copy, then asks Android or the file provider to remove the source. Deletion can fail because of permission restrictions. This does not uninstall installed apps, and physical secure erasure cannot be guaranteed on flash storage."
+                        "Antivirus ALai first creates and verifies an AES-GCM encrypted copy, then asks Android or the file provider to remove the source. Deletion can fail because of permission restrictions. This does not uninstall installed apps, and physical secure erasure cannot be guaranteed on flash storage."
                     ),
                     color = TextSecondary
                 )
@@ -1038,7 +1052,7 @@ private fun BrandHeader(
             }
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    "ANTIVIRUS AL AI",
+                    "Antivirus ALai",
                     color = TextPrimary,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.ExtraBold,
@@ -1273,7 +1287,7 @@ private fun DashboardScreen(
                     modifier = Modifier.weight(1f),
                     icon = "file",
                     title = tr(fa, "اسکن سریع", "Quick scan"),
-                    caption = tr(fa, "مسیرهای رایج", "Common locations"),
+                    caption = tr(fa, "برنامه‌ها و پوشه‌های پرخطر", "Apps + high-risk folders"),
                     onClick = onFileScan
                 )
                 QuickActionCard(
@@ -2202,7 +2216,7 @@ private fun ScanCenterScreen(
             EyebrowLabel(tr(fa, "تحلیل محلی", "ON-DEVICE ANALYSIS"))
             Text(tr(fa, "مرکز اسکن", "Scan center"), color = TextPrimary, fontSize = 25.sp, fontWeight = FontWeight.Bold)
             Text(
-                tr(fa, "بدون انتخاب پوشه؛ اسکن سریع یا عمیق را انتخاب کن تا فایل‌های قابل‌دسترسی خودکار بررسی شوند.", "No folder picker. Choose quick or deep scan to inspect accessible device storage automatically."),
+                tr(fa, "بدون انتخاب پوشه؛ اسکن سریع برای نقاط پرخطر است و اسکن عمیق تمام محدوده قابل‌دسترسی را بررسی می‌کند.", "No folder picker. Quick scan focuses on priority locations; Deep scan inspects the full accessible scope."),
                 color = TextSecondary,
                 fontSize = 12.sp
             )
@@ -2211,7 +2225,7 @@ private fun ScanCenterScreen(
         ScanModeCard(
             icon = "file",
             title = tr(fa, "اسکن سریع", "Quick scan"),
-            description = tr(fa, "برنامه‌های نصب‌شده و مسیرهای مهم حافظه بررسی می‌شوند؛ این حالت حداکثر ۳۵۰ فایل و ۱ گیگابایت داده را با سقف ۲۰۰ مگابایت برای هر فایل پوشش می‌دهد.", "Checks installed-app packages and key storage folders, up to 350 files and 1 GB total, with a 200 MB per-file limit."),
+            description = tr(fa, "برای شروع سریع، APKهای قابل‌خواندن برنامه‌های نصب‌شده و پوشه‌های Download، Downloads، Documents، Bluetooth و Android/media بررسی می‌شوند؛ سقف این مرحله ۱٬۵۰۰ فایل یا ۵۱۲ مگابایت است. برای بررسی همه فایل‌های قابل‌دسترسی، اسکن عمیق را اجرا کن.", "Fast triage checks readable installed-app APKs and Download, Downloads, Documents, Bluetooth and Android/media. It is capped at 1,500 files or 512 MiB. Run Deep scan for all accessible shared-storage files."),
             tag = tr(fa, "قابل استفاده", "AVAILABLE"),
             enabled = !scanning,
             onClick = onFileScan
@@ -2478,21 +2492,43 @@ private fun BatchScanSummaryCard(
     }
     val visibleItems = importantItems.take(if (showAllResults) 60 else 8)
     val incompleteCoverage = !report.fullScanCoverage ||
+        report.skippedFiles > 0 ||
         report.unaccountedFiles > 0 ||
-        report.unknownCount > 0
+        report.unknownCount > 0 ||
+        report.failures.isNotEmpty()
     Card(shape = RoundedCornerShape(21.dp), colors = CardDefaults.cardColors(containerColor = SurfaceBase)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
             Text(if (deep) tr(fa, "نتیجه اسکن عمیق", "Deep scan results") else tr(fa, "نتیجه اسکن سریع", "Quick scan results"), color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                MetricMini(Modifier.weight(1f), tr(fa, "بررسی‌شده", "Scanned"), report.scannedCount.toString())
-                MetricMini(Modifier.weight(1f), tr(fa, "تهدید مهم", "Priority threats"), report.suspiciousCount.toString())
+            if (!deep) {
+                Text(
+                    tr(
+                        fa,
+                        "این مرحله عمداً روی برنامه‌های نصب‌شده و پوشه‌های پرخطر تمرکز می‌کند؛ فایل‌های سایر پوشه‌ها در اسکن سریع بررسی نشده‌اند. برای پوشش گستردهٔ حافظه، اسکن عمیق را اجرا کن.",
+                        "This quick pass intentionally focuses on installed apps and priority folders. Files in other folders are not covered by Quick scan; use Deep scan for broader storage coverage."
+                    ),
+                    color = ColorWarning,
+                    fontSize = 10.sp,
+                    lineHeight = 15.sp
+                )
             }
-            Text(tr(fa, "از " + report.discoveredFiles + " مورد قابل بررسی، " + report.scannedCount + " مورد اسکن شدند.", report.scannedCount.toString() + " of " + report.discoveredFiles + " discovered items were scanned."), color = TextSecondary, fontSize = 11.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                MetricMini(Modifier.weight(1f), tr(fa, "فایل تحلیل‌شده", "Analyzed files"), report.scannedCount.toString())
+                MetricMini(Modifier.weight(1f), tr(fa, "بدافزار شناخته‌شده", "Known malware"), report.knownMalwareCount.toString())
+            }
             Text(
                 tr(
                     fa,
-                    "پوشش اسکن فایل‌های فهرست‌شده: ${report.scanCoveragePercent}% • ردشده: ${report.skippedFiles} • بدون وضعیت نهایی: ${report.unaccountedFiles}",
-                    "Scan coverage of enumerated files: ${report.scanCoveragePercent}% • skipped: ${report.skippedFiles} • without final disposition: ${report.unaccountedFiles}"
+                    "از ${report.discoveredFiles} فایل فهرست‌شده، ${report.scannedCount} فایل تحلیل شد و ${report.skippedFiles} فایل تحلیل‌نشده ثبت شد.",
+                    "Of ${report.discoveredFiles} listed files, ${report.scannedCount} were analyzed and ${report.skippedFiles} were recorded as not analyzed."
+                ),
+                color = TextSecondary,
+                fontSize = 11.sp
+            )
+            Text(
+                tr(
+                    fa,
+                    "پیشرفت محدوده اسکن: ${report.completionPercent}% • تحلیل موفق: ${report.scanCoveragePercent}% • تهدید/مشکوک: ${report.suspiciousCount} • نامشخص: ${report.unknownCount}",
+                    "Scan-scope completion: ${report.completionPercent}% • successfully analyzed: ${report.scanCoveragePercent}% • threat/review findings: ${report.suspiciousCount} • unknown: ${report.unknownCount}"
                 ),
                 color = if (report.fullScanCoverage) ColorSuccess else ColorWarning,
                 fontSize = 11.sp,
@@ -2502,11 +2538,33 @@ private fun BatchScanSummaryCard(
                 Text(
                     tr(
                         fa,
-                        "این اسکن پوشش کامل محدوده قابل‌دسترسی را تأیید نمی‌کند. موارد مسدود، ردشده یا پوشه‌های پیمایش‌نشده باید جداگانه بررسی شوند.",
-                        "This scan cannot confirm full coverage of the accessible scope. Blocked, skipped, or untraversed items need separate review."
+                        "پیمایش تمام محدوده قابل‌دسترسی کامل نشد؛ ممکن است مسیرهایی به‌علت محدودیت Android یا سقف ایمنی فهرست نشده باشند. این نتیجه ۱۰۰٪ کامل نیست.",
+                        "The accessible scope was not fully enumerated. Android restrictions or a traversal safety limit may have left paths unlisted; this is not a 100% complete scan."
                     ),
                     color = ColorWarning,
                     fontSize = 10.sp
+                )
+            } else if (report.skippedFiles > 0) {
+                Text(
+                    tr(
+                        fa,
+                        "${report.skippedFiles} فایل پیدا شد اما تحلیل نشد؛ آن‌ها در شمارش نهایی لحاظ شده‌اند و دلیل هر مورد در جزئیات گزارش آمده است.",
+                        "${report.skippedFiles} discovered file(s) were not analyzed; they are included in the final count and their reasons appear in the report details."
+                    ),
+                    color = ColorWarning,
+                    fontSize = 10.sp
+                )
+            }
+            if (report.suspiciousCount > 0 || report.knownMalwareCount > 0) {
+                Text(
+                    tr(
+                        fa,
+                        "نتیجه این نوبت: ${report.knownMalwareCount} بدافزار شناخته‌شده • ${report.suspiciousCount} مورد تهدید یا مشکوک • ${report.skippedFiles} فایل تحلیل‌نشده",
+                        "This run: ${report.knownMalwareCount} known malware • ${report.suspiciousCount} threat/review findings • ${report.skippedFiles} not analyzed"
+                    ),
+                    color = if (report.knownMalwareCount > 0) ColorDanger else ColorWarning,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold
                 )
             }
             if (report.suspiciousCount == 0) {
@@ -2569,8 +2627,16 @@ private fun BatchScanSummaryCard(
                     report.failures.take(30).forEach { failure -> Text(failure.name + ": " + failure.reason, color = TextSecondary, fontSize = 10.sp) }
                 }
             }
-            if (report.truncated || report.skippedFiles > 0) {
-                Text(tr(fa, "محدودیت ایمنی اسکن اعمال شد. موارد ردشده: " + report.skippedFiles, "Safety scan limits were applied. Skipped: " + report.skippedFiles), color = ColorWarning, fontSize = 10.sp)
+            if (report.truncated) {
+                Text(
+                    tr(
+                        fa,
+                        "محدودیت پیمایش اعمال شد؛ ممکن است مسیرهایی در این محدوده هنوز فهرست نشده باشند.",
+                        "A traversal limit was reached; some paths in this scope may not have been listed."
+                    ),
+                    color = ColorWarning,
+                    fontSize = 10.sp
+                )
             }
         }
     }
@@ -2878,7 +2944,8 @@ private fun SecurityToolsScreen(
     protectionEnabled: Boolean,
     onToggleProtection: (Boolean) -> Unit,
     onOpenScan: () -> Unit,
-    onOpenVault: () -> Unit
+    onOpenVault: () -> Unit,
+    onOpenCleaner: () -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -3081,6 +3148,14 @@ private fun SecurityToolsScreen(
             )
         }
 
+        ToolActionTile(
+            modifier = Modifier.fillMaxWidth(),
+            icon = "clean",
+            title = tr(fa, "پاک‌سازی حافظه", "Storage Cleaner"),
+            subtitle = tr(fa, "اسکن حافظه و پاکسازی کنترل‌شده فایل‌ها", "Inspect storage and clean selected files safely"),
+            onClick = onOpenCleaner
+        )
+
         if (result != null) {
             RecentScanCard(fa = fa, result = result, onClick = onOpenScan)
         } else {
@@ -3132,35 +3207,90 @@ private fun ToolActionTile(
 private fun QuarantineVaultScreen(
     fa: Boolean,
     refreshKey: Int,
-    onDelete: (String) -> Unit
+    onDelete: (String) -> Boolean
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val entries = remember(refreshKey) { QuarantineVault.list(context.applicationContext) }
     var pendingDelete by remember { mutableStateOf<VaultEntry?>(null) }
+    var pendingRestore by remember { mutableStateOf<VaultEntry?>(null) }
+    var restoreInProgress by remember { mutableStateOf(false) }
+    var expandedEntryId by remember { mutableStateOf<String?>(null) }
+
+    val restoreLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/octet-stream")
+    ) { destination ->
+        val entry = pendingRestore
+        pendingRestore = null
+        if (destination != null && entry != null && !restoreInProgress) {
+            restoreInProgress = true
+            scope.launch {
+                try {
+                    QuarantineVault.restoreTo(context.applicationContext, entry.id, destination)
+                    Toast.makeText(
+                        context,
+                        tr(fa, "فایل «${entry.originalName}» پس از بررسی صحت بازیابی شد.", "Restored ${entry.originalName} after integrity verification."),
+                        Toast.LENGTH_LONG
+                    ).show()
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    Toast.makeText(
+                        context,
+                        error.message ?: tr(fa, "بازیابی فایل انجام نشد.", "File restoration failed."),
+                        Toast.LENGTH_LONG
+                    ).show()
+                } finally {
+                    restoreInProgress = false
+                }
+            }
+        }
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(15.dp)) {
         Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
             EyebrowLabel(tr(fa, "فضای ایمن", "SECURE STORAGE"))
             Text(tr(fa, "قرنطینه", "Quarantine"), color = TextPrimary, fontSize = 25.sp, fontWeight = FontWeight.Bold)
-            Text(tr(fa, "فایل‌های قرنطینه‌شده جدا از فایل‌های اصلی نگهداری می‌شوند.", "Quarantined copies are kept separate from their original files."), color = TextSecondary, fontSize = 11.sp)
+            Text(
+                tr(fa, "نسخه‌های رمزنگاری‌شده را بررسی، بازیابی یا حذف کنید.", "Review, restore, or delete encrypted quarantine copies."),
+                color = TextSecondary,
+                fontSize = 11.sp
+            )
         }
 
         Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = SurfaceBase)) {
-            Row(Modifier.fillMaxWidth().padding(15.dp), horizontalArrangement = Arrangement.spacedBy(11.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.fillMaxWidth().padding(15.dp),
+                horizontalArrangement = Arrangement.spacedBy(11.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 IconArt("shield_location", tint = BrandTeal, size = 23.dp)
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(tr(fa, "حفاظت از نسخه‌های قرنطینه", "Quarantine protection"), color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                    Text(tr(fa, "حذف نسخه قرنطینه فقط با تأیید شما انجام می‌شود.", "Deleting a quarantined copy always requires your confirmation."), color = TextSecondary, fontSize = 10.sp)
+                    Text(
+                        tr(fa, "بازیابی فقط پس از بررسی اصالت رمزنگاری‌شده انجام می‌شود؛ حذف نیازمند تأیید شماست.", "Restore verifies encrypted integrity; deletion requires your confirmation."),
+                        color = TextSecondary,
+                        fontSize = 10.sp
+                    )
                 }
             }
         }
 
         if (entries.isEmpty()) {
             Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = SurfaceBase)) {
-                Column(Modifier.fillMaxWidth().padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                Column(
+                    Modifier.fillMaxWidth().padding(22.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(9.dp)
+                ) {
                     IconArt("status_shield", tint = ColorSuccess, size = 34.dp)
                     Text(tr(fa, "قرنطینه خالی است", "Quarantine is empty"), color = TextPrimary, fontWeight = FontWeight.Bold)
-                    Text(tr(fa, "در صورت قرنطینه یک فایل، اطلاعات آن اینجا نمایش داده می‌شود.", "Quarantined items will appear here."), color = TextSecondary, fontSize = 11.sp, textAlign = TextAlign.Center)
+                    Text(
+                        tr(fa, "در صورت قرنطینه یک فایل، اطلاعات آن اینجا نمایش داده می‌شود.", "Quarantined items will appear here."),
+                        color = TextSecondary,
+                        fontSize = 11.sp,
+                        textAlign = TextAlign.Center
+                    )
                 }
             }
         } else {
@@ -3169,14 +3299,49 @@ private fun QuarantineVaultScreen(
                     Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                             IconArt("folder", tint = BrandTeal, size = 19.dp)
-                            Text(entry.id.take(8), color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                            Spacer(Modifier.weight(1f))
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(tr(fa, "شناسه ", "Item ") + entry.id.take(8), color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                Text(entry.originalName, color = TextPrimary, fontSize = 11.sp, maxLines = 1)
+                        Text(formatBytes(entry.sizeBytes), color = TextSecondary, fontSize = 10.sp)
+                            }
                             StatusBadge(tr(fa, "قرنطینه", "QUARANTINED"), ColorSuccess)
                         }
-                        Text(tr(fa, "حجم: " + formatBytes(entry.sizeBytes), "Size: " + formatBytes(entry.sizeBytes)), color = TextSecondary, fontSize = 10.sp)
-                        Text("SHA-256  " + entry.sha256.take(20) + "…", color = TextTertiary, fontSize = 9.sp)
-                        OutlinedButton(onClick = { pendingDelete = entry }, modifier = Modifier.align(Alignment.End)) {
-                            Text(tr(fa, "حذف نسخه قرنطینه", "Delete quarantined copy"), color = ColorDanger, fontSize = 10.sp)
+                        if (expandedEntryId == entry.id) {
+                            Text("ID  " + entry.id, color = TextTertiary, fontSize = 9.sp)
+                            Text("SHA-256  " + entry.sha256, color = TextTertiary, fontSize = 9.sp)
+                            entry.mimeType?.let { Text("MIME  $it", color = TextTertiary, fontSize = 9.sp) }
+                            Text(
+                                tr(fa, "مقصد بازیابی را خودتان انتخاب می‌کنید. فایل اصلی فقط در صورتی حذف شده که Android آن را تأیید کرده باشد.", "Choose the restore destination. The original was removed only if Android confirmed its deletion."),
+                                color = TextSecondary,
+                                fontSize = 10.sp
+                            )
+                        } else {
+                            Text("SHA-256  " + entry.sha256.take(20) + "…", color = TextTertiary, fontSize = 9.sp)
+                        }
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedButton(
+                                onClick = { expandedEntryId = if (expandedEntryId == entry.id) null else entry.id },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(tr(fa, "جزئیات", "Details"), color = TextPrimary, fontSize = 10.sp)
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    pendingRestore = entry
+                                    restoreLauncher.launch(entry.originalName)
+                                },
+                                enabled = !restoreInProgress,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(tr(fa, "بازیابی", "Restore"), color = BrandTeal, fontSize = 10.sp)
+                            }
+                            OutlinedButton(onClick = { pendingDelete = entry }, enabled = !restoreInProgress) {
+                                Text(tr(fa, "حذف", "Delete"), color = ColorDanger, fontSize = 10.sp)
+                            }
                         }
                     }
                 }
@@ -3189,14 +3354,36 @@ private fun QuarantineVaultScreen(
             onDismissRequest = { pendingDelete = null },
             containerColor = SurfaceRaised,
             title = { Text(tr(fa, "حذف نسخه قرنطینه؟", "Delete quarantined copy?"), color = TextPrimary) },
-            text = { Text(tr(fa, "این کار نسخه رمزنگاری‌شده ذخیره‌شده در قرنطینه را برای همیشه حذف می‌کند. فایل اصلی را بازیابی نمی‌کند.", "This permanently deletes the encrypted quarantine copy. It does not restore or change the original file."), color = TextSecondary) },
+            text = {
+                Text(
+                    tr(fa, "نسخه رمزنگاری‌شده «${entry.originalName}» برای همیشه از قرنطینه حذف می‌شود؛ این کار فایل اصلی را بازیابی یا تغییر نمی‌دهد.", "This permanently deletes the encrypted copy of ${entry.originalName}; it does not restore or change the original file."),
+                    color = TextSecondary
+                )
+            },
             confirmButton = {
-                Button(onClick = { onDelete(entry.id); pendingDelete = null }, colors = ButtonDefaults.buttonColors(containerColor = ColorDanger)) {
+                Button(
+                    onClick = {
+                        val deleted = onDelete(entry.id)
+                        pendingDelete = null
+                        Toast.makeText(
+                            context,
+                            tr(
+                                fa,
+                                if (deleted) "نسخه قرنطینه حذف شد." else "حذف نسخه قرنطینه انجام نشد.",
+                                if (deleted) "Quarantined copy deleted." else "Could not delete the quarantined copy."
+                            ),
+                            Toast.LENGTH_LONG
+                        ).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = ColorDanger)
+                ) {
                     Text(tr(fa, "حذف دائمی", "Delete permanently"), color = AppBackground)
                 }
             },
             dismissButton = {
-                OutlinedButton(onClick = { pendingDelete = null }) { Text(tr(fa, "انصراف", "Cancel"), color = TextPrimary) }
+                OutlinedButton(onClick = { pendingDelete = null }) {
+                    Text(tr(fa, "انصراف", "Cancel"), color = TextPrimary)
+                }
             }
         )
     }
@@ -3222,8 +3409,8 @@ private fun StoreScreen(
             title = tr(fa, "پرداخت هنوز فعال نیست", "Checkout is not active"),
             body = tr(
                 fa,
-                "این نسخه کاتالوگ طرح‌ها را نشان می‌دهد. پرداخت Google Play، قیمت‌گذاری منطقه‌ای و مدیریت اشتراک هنوز متصل نشده‌اند؛ هیچ مبلغی دریافت نمی‌شود.",
-                "This version displays the plan catalogue only. Google Play Billing, regional pricing and subscription management are not connected. No payment will be taken."
+                "این نسخه کاتالوگ طرح‌ها را نشان می‌دهد. پرداخت کافه‌بازار، قیمت‌گذاری منطقه‌ای و مدیریت اشتراک هنوز متصل نشده‌اند؛ هیچ مبلغی دریافت نمی‌شود.",
+                "This version displays the plan catalogue only. Cafe Bazaar billing, regional pricing and subscription management are not connected. No payment will be taken."
             ),
             warning = true
         )
@@ -3686,6 +3873,23 @@ private fun IconArt(
                 }
                 line(6f, 21f, 18f, 21f)
             }
+            "clean" -> {
+                // Broom and sparkle mark: immediately recognizable as storage cleanup.
+                line(16.5f, 2.5f, 9f, 15f)
+                path {
+                    moveTo(4f * sx, 14.5f * sy)
+                    lineTo(11f * sx, 18f * sy)
+                    lineTo(8f * sx, 22f * sy)
+                    lineTo(2f * sx, 18f * sy)
+                    close()
+                }
+                line(4f, 18f, 3f, 21f)
+                line(6f, 19f, 5.5f, 22f)
+                line(19f, 4f, 19f, 7f)
+                line(17.5f, 5.5f, 20.5f, 5.5f)
+                line(3f, 4f, 3f, 6f)
+                line(2f, 5f, 4f, 5f)
+            }
             "folder" -> {
                 path {
                     moveTo(2.5f * sx, 6f * sy)
@@ -4019,11 +4223,11 @@ private fun featureTitle(fa: Boolean, feature: String): String = when (feature) 
 }
 
 private fun featureDescription(fa: Boolean, feature: String): String = when (feature) {
-    "quarantine" -> tr(fa, "با تأیید کاربر، نسخه AES-GCM در فضای خصوصی ذخیره و هش آن بررسی می‌شود؛ سپس حذف فایل مبدأ فقط در صورت اجازه Android یا ارائه‌دهنده فایل درخواست می‌شود. موتور ذخیره‌سازی فهرست، بازیابی و حذف را پشتیبانی می‌کند، اما صفحه مدیریتی کامل قرنطینه هنوز در رابط کاربری تکمیل نشده است.", "After user confirmation, an AES-GCM encrypted copy is stored in private app storage and its hash is verified. Source deletion is requested only if Android or the document provider allows it. The storage engine supports listing, restore and deletion, but a complete quarantine-management screen is not yet available in the UI.")
+    "quarantine" -> tr(fa, "نسخه AES-GCM در فضای خصوصی برنامه نگهداری می‌شود. فهرست، نام فایل، اندازه و SHA-256 نمایش داده می‌شود؛ جزئیات، بازیابی پس از احراز اصالت و حذف نسخه رمزنگاری‌شده با تأیید شما در دسترس است. فایل مبدأ فقط در مسیر قرنطینه‌سازی صریح و پس از تأیید نسخه ذخیره‌شده حذف می‌شود.", "AES-GCM encrypted copies are stored in private app storage. The vault lists the original filename, size and SHA-256, and supports details, integrity-verified restore and user-confirmed deletion. The source file is removed only by the explicit quarantine-and-remove operation after its encrypted copy is verified.")
     "vulnerability" -> tr(fa, "این ماژول هنوز نتیجه آسیب‌پذیری واقعی تولید نمی‌کند. مرحله بعدی شامل شناسایی SDKها و کتابخانه‌ها و تطبیق آن‌ها با منابع CVE معتبر است.", "This module does not yet produce vulnerability findings. Next steps include SDK and library inventory mapped to trusted CVE sources.")
     "phishing" -> tr(fa, "بررسی URL با فهرست اعتبار و تحلیل دامنه هنوز متصل نشده است. هیچ لینک یا پیامی در پس‌زمینه خوانده نمی‌شود.", "URL reputation and domain analysis are not connected yet. No links or messages are read in the background.")
     "network" -> tr(fa, "محافظ شبکه هنوز فعال نیست. پیاده‌سازی آن به طراحی شفاف DNS/VPN محلی و بررسی سیاست‌های Android و Google Play نیاز دارد.", "Network protection is not active. Implementation requires transparent local DNS/VPN design and Android/Google Play policy review.")
-    "brain" -> tr(fa, "مسیر اسکن از هش‌های امضاشده، قواعد محتوایی امضاشده، تحلیل ایستای APK/DEX/ELF و امتیازدهی چندنشانه‌ای پشتیبانی می‌کند؛ اما این منابع تا انتشار و نصب بانک تولیدی معتبر فعال نیستند. مدل یادگیری ماشین هنوز NOT_CONFIGURED است و تحلیل رفتاری در sandbox اجرا نمی‌شود.", "The scan pipeline supports signed hash reputation, signed content rules, APK/DEX/ELF static analysis and multi-signal risk scoring. These production intelligence sources remain inactive until a valid feed and rule bundle are published and installed. On-device ML is still NOT_CONFIGURED, and runtime sandbox analysis is not active.")
+    "brain" -> tr(fa, "موتور استنتاج ML به اسکن APK متصل است، اما فایل مدل آموزش‌دیده و ارزیابی‌شده هنوز در برنامه نصب نشده و وضعیت آن NOT_CONFIGURED است. موتور بومی محتوا و آزمون داخلی فعال‌اند؛ بانک امضا و قواعد تولیدی فقط پس از انتشار خوراک‌های امضاشده و پذیرش موفق دستگاه فعال می‌شوند. تحلیل رفتاری sandbox اجرا نمی‌شود.", "The ML inference path is integrated into APK scanning, but no trained and independently evaluated model artifact is packaged, so its state remains NOT_CONFIGURED. The native content engine and its self-test are present; production hash signatures and content rules become active only after signed feeds are published and successfully accepted by the app. Dynamic sandbox analysis is not active.")
     "selfdefense" -> tr(fa, "برنامه از تنظیمات پایه مانند غیرفعال‌بودن cleartext و backup استفاده می‌کند. پایش یکپارچگی زمان اجرا و دفاع در برابر دست‌کاری هنوز نیازمند توسعه و آزمون است.", "The app uses baseline controls such as disabled cleartext traffic and backup. Runtime integrity and anti-tamper monitoring still require implementation and testing.")
     "permissions" -> tr(fa, "اسکن سریع مسیرهای رایج حافظه را بررسی می‌کند. اسکن عمیق با اجازه مدیریت همه فایل‌ها، حافظه اشتراکی و APK برنامه‌های نصب‌شده را بررسی می‌کند؛ داده خصوصی برنامه‌های دیگر، Android/data و Android/obb قابل‌دسترسی نیستند.", "Quick scan checks common storage locations. Deep scan uses user-approved All files access to inspect shared storage and installed-app APKs; other apps’ private data, Android/data and Android/obb remain inaccessible.")
     else -> tr(fa, "ایمیل پشتیبانی رسمی: $SUPPORT_EMAIL", "Official support email: $SUPPORT_EMAIL")

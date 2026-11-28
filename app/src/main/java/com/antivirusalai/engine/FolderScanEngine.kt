@@ -7,12 +7,63 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import java.util.Locale
 
 enum class FolderScanMode { ALL_FILES, APK_ONLY }
 
 data class FolderScanItem(val uri: Uri, val result: ScanResult)
 
 data class FolderScanFailure(val name: String, val reason: String)
+
+data class ScanCoverageCell(
+    val format: String,
+    val verdict: ScanVerdict,
+    val count: Int
+)
+
+/**
+ * Aggregates only normalized format/verdict counts. It never retains file names,
+ * paths, hashes, or file bytes, and bounds attacker-controlled format cardinality.
+ */
+internal class ScanCoverageAccumulator {
+    private val formats = mutableSetOf<String>()
+    private val counts = mutableMapOf<Pair<String, ScanVerdict>, Int>()
+
+    fun record(result: ScanResult) {
+        val structuralFormat = result.staticAnalysis?.format
+            ?.trim()
+            ?.uppercase(Locale.ROOT)
+            ?.takeIf { format ->
+                format.isNotEmpty() && format.length <= 32 &&
+                    format.all { character -> character.isLetterOrDigit() || character in "_+.-" }
+            }
+        val mimeType = result.mimeType
+            ?.substringBefore(';')
+            ?.trim()
+            ?.lowercase(Locale.ROOT)
+            ?.takeIf { mime ->
+                mime.length <= 64 && '/' in mime &&
+                    mime.all { character -> character.isLetterOrDigit() || character in "/-+._!#$&^" }
+            }
+        val candidate = structuralFormat ?: mimeType ?: "UNKNOWN"
+        val format = when {
+            candidate in formats -> candidate
+            formats.size < MAX_FORMATS - 1 -> candidate.also { formats += it }
+            else -> "OTHER".also { formats += it }
+        }
+        val key = format to result.verdict
+        counts[key] = (counts[key] ?: 0) + 1
+    }
+
+    fun snapshot(): List<ScanCoverageCell> = counts.map { (key, count) ->
+        ScanCoverageCell(format = key.first, verdict = key.second, count = count)
+    }.sortedWith(compareBy<ScanCoverageCell> { it.format }.thenBy { it.verdict.name })
+
+    companion object {
+        const val MAX_FORMATS = 32
+        const val MAX_CELLS = 256
+    }
+}
 
 data class FolderScanReport(
     val items: List<FolderScanItem>,
@@ -23,7 +74,8 @@ data class FolderScanReport(
     val scannedCountOverride: Int? = null,
     val suspiciousCountOverride: Int? = null,
     val unknownCountOverride: Int? = null,
-    val matchedCountOverride: Int? = null
+    val matchedCountOverride: Int? = null,
+    val coverageMatrix: List<ScanCoverageCell> = emptyList()
 ) {
     val scannedCount: Int get() = scannedCountOverride ?: items.size
     val suspiciousCount: Int get() = suspiciousCountOverride ?: items.count { it.result.verdict in setOf(ScanVerdict.KNOWN_MALWARE, ScanVerdict.POTENTIALLY_UNWANTED, ScanVerdict.SUSPICIOUS) }
@@ -34,22 +86,44 @@ data class FolderScanReport(
     }
     val matchedCount: Int get() = matchedCountOverride ?: items.count { it.result.verdict == ScanVerdict.TEST_MARKER_MATCH }
 
-    /** Percentage of known file candidates that actually completed the scanner. */
+    /** Actual analysis ratio; files skipped by the engine remain visible in this value. */
     val scanCoveragePercent: Int get() =
         if (discoveredFiles == 0) {
-            if (!truncated && failures.isEmpty()) 100 else 0
+            if (!truncated) 100 else 0
         } else ((scannedCount * 100L) / discoveredFiles).toInt().coerceIn(0, 100)
+
+    /** Number of discovered files with a final analyzed-or-not-analyzed disposition. */
+    val accountedFiles: Int get() =
+        (scannedCount + skippedFiles).coerceAtMost(discoveredFiles)
+
+    /** Completion of the accessible inventory, not the percentage successfully analyzed. */
+    val completionPercent: Int get() =
+        if (discoveredFiles == 0) {
+            if (fullScanCoverage) 100 else 0
+        } else {
+            val accountedPercent = ((accountedFiles * 100L) / discoveredFiles).toInt().coerceIn(0, 100)
+            if (fullScanCoverage) accountedPercent else accountedPercent.coerceAtMost(99)
+        }
+
+    /** Exact known-malware count across all scanner results, not only the UI preview. */
+    val knownMalwareCount: Int get() =
+        coverageMatrix.filter { it.verdict == ScanVerdict.KNOWN_MALWARE }.sumOf { it.count }
+            .takeIf { it > 0 }
+            ?: items.count { it.result.verdict == ScanVerdict.KNOWN_MALWARE }
 
     /** Files with no scanned result and no explicit skip/failure disposition. */
     val unaccountedFiles: Int get() =
         (discoveredFiles - scannedCount - skippedFiles).coerceAtLeast(0)
 
-    /** True only when every known candidate has a terminal scanned-or-skipped disposition. */
     val allDiscoveredFilesAccounted: Boolean get() = unaccountedFiles == 0
 
-    /** True only when all known files were scanned and traversal did not report gaps. */
+    /**
+     * Full scope completion means every Android-accessible path in this scan scope
+     * was enumerated and every discovered file has a final disposition. Skips
+     * remain visible in their own counter and do not hold the progress below 100%.
+     */
     val fullScanCoverage: Boolean get() =
-        allDiscoveredFilesAccounted && skippedFiles == 0 && !truncated && failures.isEmpty()
+        allDiscoveredFilesAccounted && !truncated
 }
 
 /**
@@ -57,6 +131,7 @@ data class FolderScanReport(
  * It never walks arbitrary device storage and never installs or executes files.
  */
 object FolderScanEngine {
+    private const val UNKNOWN_CASE_BATCH_SIZE = 128
     const val MAX_FILES = ScanLimits.FOLDER_FILE_LIMIT
     const val MAX_DEPTH = 64
     const val MAX_TOTAL_BYTES = ScanLimits.FOLDER_TOTAL_BYTES
@@ -202,6 +277,17 @@ object FolderScanEngine {
         var suspiciousCount = 0
         var unknownCount = 0
         var matchedCount = 0
+        val coverage = ScanCoverageAccumulator()
+        val pendingUnknownCases = mutableListOf<UnknownFileCase>()
+
+        fun flushUnknownCases() {
+            if (pendingUnknownCases.isEmpty()) return
+            runCatching {
+                UnknownFileInvestigationStore.recordBatch(context.applicationContext, pendingUnknownCases.toList())
+            }
+            pendingUnknownCases.clear()
+        }
+
         for ((index, candidate) in candidates.withIndex()) {
             currentCoroutineContext().ensureActive()
             if (candidate.declaredSize > ScanEngine.MAX_FILE_SIZE_BYTES) {
@@ -214,7 +300,7 @@ object FolderScanEngine {
             ) {
                 skipped++
                 failures += FolderScanFailure(candidate.name, "Folder scan reached the 25 GB total data limit.")
-                truncated = true
+                // The file is explicitly counted as not analyzed; discovery itself is complete.
                 continue
             }
 
@@ -222,9 +308,16 @@ object FolderScanEngine {
                 onProgress(index + 1, candidates.size, candidate.name)
             }
             try {
-                val result = ScanEngine.scan(context.applicationContext, candidate.uri)
+                val result = ScanEngine.scan(
+                    context.applicationContext,
+                    candidate.uri,
+                    persistUnknownCase = false
+                )
+                result.unknownFileCase?.let(pendingUnknownCases::add)
+                if (pendingUnknownCases.size >= UNKNOWN_CASE_BATCH_SIZE) flushUnknownCases()
                 totalBytes += result.sizeBytes
                 scannedCount++
+                coverage.record(result)
                 when (result.verdict) {
                     ScanVerdict.KNOWN_MALWARE,
                     ScanVerdict.POTENTIALLY_UNWANTED,
@@ -247,12 +340,14 @@ object FolderScanEngine {
                     previewItems += reportItem
                 }
                 if (totalBytes >= MAX_TOTAL_BYTES) {
-                    truncated = index < candidates.lastIndex
-                    if (truncated) {
-                        skipped += candidates.size - index - 1
+                    val remaining = candidates.size - index - 1
+                    if (remaining > 0) {
+                        // These files were already enumerated, so record them as skipped
+                        // without marking the directory traversal itself as incomplete.
+                        skipped += remaining
                         failures += FolderScanFailure(
                             "Remaining files",
-                            "Stopped after reaching the 25 GB total data limit."
+                            "Stopped analyzing after the 25 GB total data limit; $remaining file(s) were recorded as not scanned."
                         )
                     }
                     break
@@ -265,16 +360,35 @@ object FolderScanEngine {
             }
         }
 
-        FolderScanReport(
+        flushUnknownCases()
+
+        val report = FolderScanReport(
             items = if (findingItems.isNotEmpty()) findingItems else previewItems,
             failures = failures,
             discoveredFiles = candidates.size + discoverySkipped,
             skippedFiles = skipped,
-            truncated = truncated || skipped > 0,
+            // Skipped candidates have an explicit final disposition. Only traversal
+            // gaps or an enumeration safety limit make the accessible scope incomplete.
+            truncated = truncated,
             scannedCountOverride = scannedCount,
             suspiciousCountOverride = suspiciousCount,
             unknownCountOverride = unknownCount,
-            matchedCountOverride = matchedCount
+            matchedCountOverride = matchedCount,
+            coverageMatrix = coverage.snapshot()
         )
+        val finalProgress = if (report.fullScanCoverage) {
+            report.discoveredFiles
+        } else {
+            (report.discoveredFiles - 1).coerceAtLeast(0)
+        }
+        withContext(Dispatchers.Main.immediate) {
+            onProgress(
+                finalProgress,
+                report.discoveredFiles,
+                if (report.fullScanCoverage) "Accessible folder scope completed"
+                else "Accessible folder scope is incomplete; see skipped-file details"
+            )
+        }
+        report
     }
 }

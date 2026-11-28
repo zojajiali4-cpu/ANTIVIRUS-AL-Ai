@@ -29,25 +29,42 @@ object EicarTestDetector {
         }
     }
 
+    /** Incremental matcher used by the main scan pass; it retains only KMP state. */
+    class StreamingMatcher {
+        private var matched = 0
+        var found: Boolean = false
+            private set
+
+        fun update(buffer: ByteArray, offset: Int = 0, length: Int = buffer.size - offset) {
+            require(offset >= 0 && length >= 0 && offset <= buffer.size - length)
+            if (found) return
+            val end = offset + length
+            for (i in offset until end) {
+                val value = buffer[i]
+                while (matched > 0 && value != EicarTestDetector.pattern[matched]) {
+                    matched = EicarTestDetector.prefix[matched - 1]
+                }
+                if (value == EicarTestDetector.pattern[matched]) matched++
+                if (matched == EicarTestDetector.pattern.size) {
+                    found = true
+                    return
+                }
+            }
+        }
+    }
+
     fun contains(file: File): Boolean = file.inputStream().use(::contains)
 
     /** Streaming KMP matcher; memory use is constant regardless of file size. */
     fun contains(input: InputStream): Boolean {
-        var matched = 0
-        val buffer = ByteArray(8192)
+        val matcher = StreamingMatcher()
+        val buffer = ByteArray(64 * 1024)
         while (true) {
             val count = input.read(buffer)
-            if (count < 0) return false
+            if (count < 0) return matcher.found
             if (count == 0) continue
-
-            for (i in 0 until count) {
-                val value = buffer[i]
-                while (matched > 0 && value != pattern[matched]) {
-                    matched = prefix[matched - 1]
-                }
-                if (value == pattern[matched]) matched++
-                if (matched == pattern.size) return true
-            }
+            matcher.update(buffer, 0, count)
+            if (matcher.found) return true
         }
     }
 }

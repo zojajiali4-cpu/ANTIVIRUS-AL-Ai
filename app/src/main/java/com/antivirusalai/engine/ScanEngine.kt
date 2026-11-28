@@ -16,12 +16,37 @@ import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
 
+data class ScanBatchContext internal constructor(
+    val contentBundle: com.antivirusalai.intel.SignedContentRuleBundle?,
+    val contentRuleState: ContentRuleBundleState,
+    val threatFeed: com.antivirusalai.intel.SignedThreatFeed?,
+    val threatFeedStatus: com.antivirusalai.intel.ThreatFeedStatus
+)
+
 class ScanTooLargeException(message: String) : Exception(message)
 
 object ScanEngine {
     const val MAX_FILE_SIZE_BYTES = 200L * 1024L * 1024L
 
-    suspend fun scan(context: Context, uri: Uri): ScanResult = withContext(Dispatchers.IO) {
+    /** Capture one verified intelligence snapshot for an entire multi-file run. */
+    fun prepareBatchContext(context: Context): ScanBatchContext {
+        val appContext = context.applicationContext
+        val bundle = runCatching { ContentRuleBundleRuntime.current(appContext) }.getOrNull()
+        val ruleState = if (bundle != null) ContentRuleBundleState.CURRENT
+        else runCatching { ContentRuleBundleRuntime.state(appContext) }.getOrDefault(ContentRuleBundleState.INVALID)
+        val feed = runCatching { ThreatFeedRuntime.currentFeed(appContext) }.getOrNull()
+        val feedStatus = runCatching { ThreatFeedRuntime.status(appContext) }.getOrElse {
+            com.antivirusalai.intel.ThreatFeedStatus(ThreatFeedFreshness.UNAVAILABLE, "STATUS_READ_FAILED")
+        }
+        return ScanBatchContext(bundle, ruleState, feed, feedStatus)
+    }
+
+    suspend fun scan(
+        context: Context,
+        uri: Uri,
+        persistUnknownCase: Boolean = true,
+        batchContext: ScanBatchContext? = null
+    ): ScanResult = withContext(Dispatchers.IO) {
         val resolver = context.contentResolver
         val localFile = if (uri.scheme == "file") uri.path?.let(::File) else null
         val metadata = if (localFile != null) {
@@ -49,12 +74,30 @@ object ScanEngine {
         }
 
         val mimeType = resolver.getType(uri)
-        val temp = File.createTempFile("alai-scan-", ".bin", context.cacheDir)
+        val captureByMetadata = listOf(".apk", ".zip", ".jar", ".aab", ".apks", ".xapk", ".dex", ".so", ".elf")
+            .any { displayName.endsWith(it, ignoreCase = true) } ||
+            mimeType == "application/vnd.android.package-archive"
+        var temp: File? = null
+        var tempSink: FileOutputStream? = null
+        val headerPrefix = ByteArray(4)
+        var headerPrefixSize = 0
+        var headerDecisionMade = captureByMetadata
+        val eicarMatcher = EicarTestDetector.StreamingMatcher()
         val digest = MessageDigest.getInstance("SHA-256")
         var totalBytes = 0L
         val startedAt = System.nanoTime()
-        val contentBundleStage = ScanStageRunner.execute("CONTENT_RULE_BUNDLE") {
-            ContentRuleBundleRuntime.current(context.applicationContext)
+        val preparedContentBundle = if (batchContext == null) null else {
+            batchContext.contentBundle?.takeIf { it.expiresAtEpochSeconds > System.currentTimeMillis() / 1000L }
+        }
+        val effectiveContentRuleState = if (
+            batchContext != null && batchContext.contentBundle != null && preparedContentBundle == null
+        ) ContentRuleBundleState.EXPIRED else batchContext?.contentRuleState
+        val contentBundleStage = if (batchContext == null) {
+            ScanStageRunner.execute("CONTENT_RULE_BUNDLE") {
+                ContentRuleBundleRuntime.current(context.applicationContext)
+            }
+        } else {
+            ScanStageExecution("CONTENT_RULE_BUNDLE", ScanStageState.COMPLETED, preparedContentBundle)
         }
         val contentBundle = contentBundleStage.value
         val nativeInitStage = ScanStageRunner.execute("NATIVE_ENGINE_INIT") {
@@ -67,40 +110,76 @@ object ScanEngine {
         var nativeMatches = emptySet<String>()
 
         try {
+            if (captureByMetadata) {
+                temp = File.createTempFile("alai-scan-", ".bin", context.cacheDir)
+                tempSink = FileOutputStream(temp!!)
+            }
             val input = resolver.openInputStream(uri)
                 ?: throw IllegalStateException("Android could not open the selected file.")
             input.use { source ->
-                FileOutputStream(temp).use { sink ->
-                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                    while (true) {
-                        currentCoroutineContext().ensureActive()
-                        val count = source.read(buffer)
-                        if (count < 0) break
-                        totalBytes += count
-                        if (totalBytes > MAX_FILE_SIZE_BYTES) {
-                            throw ScanTooLargeException("File exceeds the 200 MB MVP scan limit.")
+                // The native scanner accepts chunks up to 64 KiB. Matching that
+                // boundary reduces read/JNI calls without exceeding its contract.
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    currentCoroutineContext().ensureActive()
+                    val count = source.read(buffer)
+                    if (count < 0) break
+                    if (count == 0) continue
+                    totalBytes += count
+                    if (totalBytes > MAX_FILE_SIZE_BYTES) {
+                        throw ScanTooLargeException("File exceeds the 200 MB MVP scan limit.")
+                    }
+                    digest.update(buffer, 0, count)
+                    eicarMatcher.update(buffer, 0, count)
+                    if (nativeSession != null && contentEngineErrorCode == null) {
+                        try {
+                            nativeSession?.update(buffer, count)
+                        } catch (_: Exception) {
+                            runCatching { nativeSession?.close() }
+                            nativeSession = null
+                            contentEngineState = ContentEngineState.INCOMPLETE
+                            contentEngineErrorCode = "NATIVE_UPDATE_FAILED"
+                        } catch (_: LinkageError) {
+                            runCatching { nativeSession?.close() }
+                            nativeSession = null
+                            contentEngineState = ContentEngineState.INCOMPLETE
+                            contentEngineErrorCode = "NATIVE_LINKAGE_FAILED"
                         }
-                        digest.update(buffer, 0, count)
-                        if (nativeSession != null && contentEngineErrorCode == null) {
-                            try {
-                                nativeSession?.update(buffer, count)
-                            } catch (_: Exception) {
-                                runCatching { nativeSession?.close() }
-                                nativeSession = null
-                                contentEngineState = ContentEngineState.INCOMPLETE
-                                contentEngineErrorCode = "NATIVE_UPDATE_FAILED"
-                            } catch (_: LinkageError) {
-                                runCatching { nativeSession?.close() }
-                                nativeSession = null
-                                contentEngineState = ContentEngineState.INCOMPLETE
-                                contentEngineErrorCode = "NATIVE_LINKAGE_FAILED"
+                    }
+
+                    val sink = tempSink
+                    if (sink != null) {
+                        sink.write(buffer, 0, count)
+                    } else if (!headerDecisionMade) {
+                        val prefixBytesFromChunk = minOf(4 - headerPrefixSize, count)
+                        System.arraycopy(buffer, 0, headerPrefix, headerPrefixSize, prefixBytesFromChunk)
+                        headerPrefixSize += prefixBytesFromChunk
+                        if (headerPrefixSize == headerPrefix.size) {
+                            headerDecisionMade = true
+                            val zipContainer = headerPrefix[0] == 'P'.code.toByte() &&
+                                headerPrefix[1] == 'K'.code.toByte()
+                            val elfBinary = headerPrefix[0] == 0x7f.toByte() &&
+                                headerPrefix[1] == 'E'.code.toByte() &&
+                                headerPrefix[2] == 'L'.code.toByte() &&
+                                headerPrefix[3] == 'F'.code.toByte()
+                            if (zipContainer || elfBinary) {
+                                temp = File.createTempFile("alai-scan-", ".bin", context.cacheDir)
+                                tempSink = FileOutputStream(temp!!)
+                                tempSink!!.write(headerPrefix)
+                                if (count > prefixBytesFromChunk) {
+                                    tempSink!!.write(
+                                        buffer,
+                                        prefixBytesFromChunk,
+                                        count - prefixBytesFromChunk
+                                    )
+                                }
                             }
                         }
-                        sink.write(buffer, 0, count)
                     }
-                    sink.fd.sync()
                 }
             }
+            tempSink?.close()
+            tempSink = null
 
             if (nativeSession != null && contentEngineErrorCode == null) {
                 try {
@@ -115,7 +194,7 @@ object ScanEngine {
                 }
             }
 
-            val hash = digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+            val hash = Sha256.hex(digest.digest())
             val evidence = mutableListOf<ScanEvidence>()
             ScanStageRunner.failureEvidence(contentBundleStage)?.let(evidence::add)
             ScanStageRunner.failureEvidence(nativeInitStage)?.let(evidence::add)
@@ -128,8 +207,16 @@ object ScanEngine {
                 )
             }
             if (contentBundle == null) {
-                val stateStage = ScanStageRunner.execute("CONTENT_RULE_BUNDLE_STATE") {
-                    ContentRuleBundleRuntime.state(context.applicationContext)
+                val stateStage = if (batchContext == null) {
+                    ScanStageRunner.execute("CONTENT_RULE_BUNDLE_STATE") {
+                        ContentRuleBundleRuntime.state(context.applicationContext)
+                    }
+                } else {
+                    ScanStageExecution(
+                        "CONTENT_RULE_BUNDLE_STATE",
+                        ScanStageState.COMPLETED,
+                        effectiveContentRuleState ?: ContentRuleBundleState.INVALID
+                    )
                 }
                 ScanStageRunner.failureEvidence(stateStage)?.let(evidence::add)
                 val state = stateStage.value ?: ContentRuleBundleState.INVALID
@@ -192,18 +279,35 @@ object ScanEngine {
             val localMatch = localReputationStage.value
 
             val eicarStage = ScanStageRunner.execute("EICAR_SELF_TEST") {
-                EicarTestDetector.contains(temp)
+                eicarMatcher.found
             }
             ScanStageRunner.failureEvidence(eicarStage)?.let(evidence::add)
             val eicarMatch = eicarStage.value == true
 
-            val threatFeedStage = ScanStageRunner.execute("SIGNED_THREAT_FEED_READ") {
-                ThreatFeedRuntime.currentFeed(context.applicationContext)
+            val preparedThreatFeed = if (batchContext == null) null else {
+                batchContext.threatFeed?.takeIf { it.expiresAtEpochSeconds > System.currentTimeMillis() / 1000L }
+            }
+            val effectiveThreatFeedStatus = when {
+                batchContext == null -> null
+                batchContext.threatFeed != null && preparedThreatFeed == null ->
+                    com.antivirusalai.intel.ThreatFeedStatus(ThreatFeedFreshness.STALE, "FEED_EXPIRED_DURING_SCAN")
+                else -> batchContext.threatFeedStatus
+            }
+            val threatFeedStage = if (batchContext == null) {
+                ScanStageRunner.execute("SIGNED_THREAT_FEED_READ") {
+                    ThreatFeedRuntime.currentFeed(context.applicationContext)
+                }
+            } else {
+                ScanStageExecution("SIGNED_THREAT_FEED_READ", ScanStageState.COMPLETED, preparedThreatFeed)
             }
             ScanStageRunner.failureEvidence(threatFeedStage)?.let(evidence::add)
             val currentThreatFeed = threatFeedStage.value
-            val threatFeedStatusStage = ScanStageRunner.execute("SIGNED_THREAT_FEED_STATUS") {
-                ThreatFeedRuntime.status(context.applicationContext)
+            val threatFeedStatusStage = if (batchContext == null) {
+                ScanStageRunner.execute("SIGNED_THREAT_FEED_STATUS") {
+                    ThreatFeedRuntime.status(context.applicationContext)
+                }
+            } else {
+                ScanStageExecution("SIGNED_THREAT_FEED_STATUS", ScanStageState.COMPLETED, effectiveThreatFeedStatus)
             }
             ScanStageRunner.failureEvidence(threatFeedStatusStage)?.let(evidence::add)
             val threatFeedStatus = threatFeedStatusStage.value
@@ -244,17 +348,29 @@ object ScanEngine {
                 )
             }
 
-            val looksLikeApk = ApkFileDetector.isApkArchive(temp) ||
+            val looksLikeApk = temp?.let(ApkFileDetector::isApkArchive) == true ||
                 displayName.endsWith(".apk", ignoreCase = true) ||
                 mimeType == "application/vnd.android.package-archive"
             val apkStage = ScanStageRunner.execute("APK_METADATA_ANALYSIS") {
-                if (looksLikeApk) ApkMetadataInspector.inspect(context, temp) else null
+                if (looksLikeApk && temp != null) ApkMetadataInspector.inspect(context, temp!!) else null
             }
             ScanStageRunner.failureEvidence(apkStage)?.let(evidence::add)
             val apk = apkStage.value
 
             val staticStage = ScanStageRunner.execute("FORMAT_STATIC_ANALYSIS") {
-                FormatStaticAnalyzer.analyze(temp)
+                // Ordinary documents/media are inspected in the streaming pass.
+                // Materialize only APK/ZIP/ELF-like inputs that need random-access
+                // structural parsing; do not write and reread every file.
+                temp?.let(FormatStaticAnalyzer::analyze) ?: StaticAnalysisReport(
+                    format = null,
+                    supported = false,
+                    complete = true,
+                    entryCount = 0,
+                    expandedBytes = 0L,
+                    evidence = emptyList(),
+                    signalCategories = emptySet(),
+                    riskPoints = 0
+                )
             }
             ScanStageRunner.failureEvidence(staticStage)?.let(evidence::add)
             val staticReport = staticStage.value ?: StaticAnalysisReport(
@@ -384,6 +500,29 @@ object ScanEngine {
                 }
             }
 
+            val noKnownIndicatorReady = ScanVerdictPolicy.canDeclareNoKnownIndicator(
+                ScanVerdictReadiness(
+                    threatFeedAvailable = threatFeedStage.completed && currentThreatFeed != null,
+                    threatFeedFresh = threatFeedStatusStage.completed &&
+                        threatFeedStatus.freshness == ThreatFeedFreshness.UP_TO_DATE,
+                    threatFeedNotTruncated = currentThreatFeed?.truncated != true,
+                    signedContentRulesAvailable = contentBundleStage.completed && contentBundle != null,
+                    nativeContentEngineComplete = nativeInitStage.completed &&
+                        contentEngineState == ContentEngineState.COMPLETE,
+                    staticAnalysisSupported = staticStage.completed && staticReport.supported,
+                    staticAnalysisComplete = staticReport.complete,
+                    requiredStagesCompleted = localReputationStage.completed &&
+                        eicarStage.completed && apkStage.completed &&
+                        permissionStage.completed && fusionStage.completed &&
+                        qualifiedRulesStage.completed && partialRulesStage.completed &&
+                        mlStage.completed && mlResult.state != MlModelState.ERROR,
+                    noKnownThreatMatches = threatMatch == null && localMatch == null &&
+                        !eicarMatch && !selfTestMatch && matchedContentRules.isEmpty() &&
+                        partialRulesStage.value.isNullOrEmpty() && !mlResult.highRisk &&
+                        !combinedRisk.suspicious
+                )
+            )
+
             val verdict = when {
                 threatMatch?.classification == ThreatClassification.MALWARE -> ScanVerdict.KNOWN_MALWARE
                 contentRuleVerdict == ScanVerdict.KNOWN_MALWARE -> ScanVerdict.KNOWN_MALWARE
@@ -418,6 +557,7 @@ object ScanEngine {
                 }
                 mlResult.highRisk -> ScanVerdict.SUSPICIOUS
                 combinedRisk.suspicious -> ScanVerdict.SUSPICIOUS
+                noKnownIndicatorReady -> ScanVerdict.NO_KNOWN_INDICATOR
                 staticReport.supported || apk != null -> ScanVerdict.INCOMPLETE_THREAT_INTELLIGENCE
                 else -> ScanVerdict.UNSUPPORTED_FILE
             }
@@ -462,16 +602,19 @@ object ScanEngine {
             )
             val unknownCase = UnknownFileInvestigator.createCase(baseResult)
             if (unknownCase != null) {
-                runCatching {
-                    UnknownFileInvestigationStore.record(context.applicationContext, unknownCase)
+                if (persistUnknownCase) {
+                    runCatching {
+                        UnknownFileInvestigationStore.record(context.applicationContext, unknownCase)
+                    }
                 }
                 baseResult.copy(unknownFileCase = unknownCase)
             } else {
                 baseResult
             }
         } finally {
+            runCatching { tempSink?.close() }
             runCatching { nativeSession?.close() }
-            temp.delete()
+            temp?.delete()
         }
     }
 }

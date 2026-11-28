@@ -83,6 +83,7 @@ kotlin {
 
 dependencies {
     implementation(libs.androidx.activity.compose)
+    implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("androidx.work:work-runtime-ktx:2.12.0")
     implementation(libs.androidx.compose.animation.core)
     implementation("androidx.lifecycle:lifecycle-livedata-ktx:2.9.4")

@@ -35,6 +35,7 @@ class DeviceScanWorker(appContext: Context, parameters: WorkerParameters) : Coro
                     KEY_CURRENT to current,
                     KEY_TOTAL to total,
                     KEY_CURRENT_NAME to "$current / $total • $name",
+                    KEY_SCOPE_COMPLETE to false,
                     KEY_ELAPSED_MS to elapsed
                 ))
                 setForeground(createForegroundInfo(current, total))
@@ -43,8 +44,10 @@ class DeviceScanWorker(appContext: Context, parameters: WorkerParameters) : Coro
             Result.success(workDataOf(
                 KEY_DEEP to deep,
                 KEY_STARTED_AT_MS to startedAt,
-                KEY_CURRENT to report.scannedCount,
+                KEY_CURRENT to report.accountedFiles,
                 KEY_TOTAL to report.discoveredFiles,
+                KEY_SCOPE_COMPLETE to report.fullScanCoverage,
+                KEY_SCAN_COVERAGE_PERCENT to report.scanCoveragePercent,
                 KEY_ELAPSED_MS to (System.currentTimeMillis() - startedAt).coerceAtLeast(0L)
             ))
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
@@ -98,6 +101,8 @@ class DeviceScanWorker(appContext: Context, parameters: WorkerParameters) : Coro
         const val KEY_TOTAL = "device_scan_total"
         const val KEY_CURRENT_NAME = "device_scan_current_name"
         const val KEY_ELAPSED_MS = "device_scan_elapsed_ms"
+        const val KEY_SCOPE_COMPLETE = "device_scan_scope_complete"
+        const val KEY_SCAN_COVERAGE_PERCENT = "device_scan_analysis_coverage_percent"
         const val KEY_ERROR = "device_scan_error"
         private const val CHANNEL_ID = "alai-device-scan"
         private const val NOTIFICATION_ID = 4107

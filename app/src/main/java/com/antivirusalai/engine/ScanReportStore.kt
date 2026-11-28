@@ -25,6 +25,19 @@ object ScanReportStore {
             .put("suspiciousCountOverride", report.suspiciousCountOverride ?: JSONObject.NULL)
             .put("unknownCountOverride", report.unknownCountOverride ?: JSONObject.NULL)
             .put("matchedCountOverride", report.matchedCountOverride ?: JSONObject.NULL)
+        val coverageMatrix = JSONArray()
+        report.coverageMatrix.take(ScanCoverageAccumulator.MAX_CELLS).forEach { cell ->
+            val count = cell.count.coerceIn(0, ScanLimits.FOLDER_FILE_LIMIT)
+            if (cell.format.isNotBlank() && count > 0) {
+                coverageMatrix.put(
+                    JSONObject()
+                        .put("format", cell.format.take(64))
+                        .put("verdict", cell.verdict.name)
+                        .put("count", count)
+                )
+            }
+        }
+        root.put("coverageMatrix", coverageMatrix)
         val items = JSONArray()
         report.items.take(60).forEach { item ->
             items.put(JSONObject().put("uri", item.uri.toString()).put("result", encodeResult(item.result)))
@@ -57,6 +70,18 @@ object ScanReportStore {
             val item = failureArray.optJSONObject(index) ?: continue
             failures += FolderScanFailure(item.optString("name"), item.optString("reason"))
         }
+        val coverageMatrix = mutableListOf<ScanCoverageCell>()
+        val coverageArray = root.optJSONArray("coverageMatrix") ?: JSONArray()
+        for (index in 0 until minOf(coverageArray.length(), ScanCoverageAccumulator.MAX_CELLS)) {
+            val item = coverageArray.optJSONObject(index) ?: continue
+            val format = item.optString("format").trim().take(64)
+            val verdict = runCatching { ScanVerdict.valueOf(item.optString("verdict")) }.getOrNull()
+                ?: continue
+            val count = item.optInt("count").coerceIn(0, ScanLimits.FOLDER_FILE_LIMIT)
+            if (format.isNotBlank() && count > 0) {
+                coverageMatrix += ScanCoverageCell(format, verdict, count)
+            }
+        }
         StoredDeviceScan(
             deep = root.optBoolean("deep", false),
             report = FolderScanReport(
@@ -67,7 +92,8 @@ object ScanReportStore {
                 scannedCountOverride = root.nullableInt("scannedCountOverride"),
                 suspiciousCountOverride = root.nullableInt("suspiciousCountOverride"),
                 unknownCountOverride = root.nullableInt("unknownCountOverride"),
-                matchedCountOverride = root.nullableInt("matchedCountOverride")
+                matchedCountOverride = root.nullableInt("matchedCountOverride"),
+                coverageMatrix = coverageMatrix
             )
         )
     }.getOrNull()

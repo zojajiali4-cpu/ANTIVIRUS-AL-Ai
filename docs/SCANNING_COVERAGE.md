@@ -1,20 +1,32 @@
 # Scanning coverage and known limitations
 
-Reviewed: 2026-11-08
+Reviewed: 2026-11-28
 
 ## File coverage limits
 
 | Mode | Maximum files | Maximum total data | Per-file maximum |
 |---|---:|---:|---:|
-| Device quick scan | 350 | 1 GiB | 200 MiB |
+| Device quick scan | 1,500 | 512 MiB | 200 MiB |
 | Device deep scan | 100,000 | 25 GiB | 200 MiB |
 | User-selected SAF folder | 100,000 | 25 GiB | 200 MiB |
+
+Quick-device scan is a bounded triage pass: it checks readable installed-app APK components plus Download, Downloads, Documents, Bluetooth, and Android/media, up to 1,500 files / 512 MiB. It intentionally does not inspect every directory; use deep scan for the full accessible-storage scope.
 
 Deep-device and user-selected-folder scans are configured to handle libraries of 60,000 files. They are still bounded: directory depth/visit limits, permission denials, provider errors, the total-byte ceiling, and Android protected locations can make a scan incomplete. Any such condition must be reflected in the report; it must not be described as a complete clean scan.
 
 Android does not expose other apps' private data. In particular, `Android/data` and `Android/obb` are excluded from shared-storage traversal even when the user grants All files access. The app can inspect only files and installed APK components Android makes readable.
 
 The UI keeps at most 60 result details in memory, prioritizes threat findings when selecting those details, and maintains aggregate scanned/threat/unknown/test counts over the full run. The preview is not a complete per-file audit log.
+
+## Scan throughput work
+
+The scan read path now computes SHA-256, streams the C++ content matcher, and checks the harmless EICAR self-test marker from the same 64 KiB input chunks. Device-wide batch scans also capture the signed threat-feed and content-rule snapshots once per run; each file uses that authenticated snapshot with expiry rechecked per file, rather than repeatedly querying the stores. Quick scan uses a separately bounded priority scope; deep scan retains the full accessible-storage traversal. The 64 KiB chunk size is intentionally aligned with the native scanner's maximum accepted chunk size.
+
+The scanner no longer writes every ordinary document, image, audio or video file to a temporary file and rereads it for the EICAR check. It materializes a temporary file only when metadata or the first four content bytes indicate an APK/archive/DEX/ELF-like input that needs random-access structural analysis. The temporary file is closed before analysis; it is not fsynced because it is an ephemeral working copy, not durable user data.
+
+Device-wide and selected-folder scans collect unknown-file investigation metadata in memory and persist it in batches of at most 128 cases. This avoids a SharedPreferences JSON read/merge/write for every file. The investigation queue remains capped at 100 unique hashes and stores no paths, names, file bytes, or private content.
+
+These are source-level I/O and persistence optimizations, not a published speed claim. No elapsed-time improvement is claimed until the same controlled corpus is benchmarked on real Android devices. The required benchmark must record total files, total bytes, files/second, MiB/second, elapsed time, battery/thermal state, scanned/skipped totals, and compare the old and optimized commits under the same device conditions.
 
 ## What the current detection engine actually detects
 
@@ -34,7 +46,7 @@ The visible protection service watches only selected common shared-storage direc
 
 The Android client is pinned to:
 
-`https://raw.githubusercontent.com/karafarin12800-del/ANTIVIRUS-AL-Ai/security-feed/threat-feed/latest.alfeed`
+`https://raw.githubusercontent.com/zojajiali4-cpu/ANTIVIRUS-AL-Ai/security-feed/threat-feed/latest.alfeed`
 
 As of this review, the repository has no `security-feed` branch, so that URL has no published signed feed. The client must report threat intelligence as unavailable until a valid feed is published and installed. An unavailable feed is never equivalent to a clean verdict.
 
@@ -60,7 +72,8 @@ For device and user-selected-folder reports:
 - `skippedFiles` records candidates that could not be scanned because of access, per-file, aggregate-size, or other scan errors.
 - `unaccountedFiles` is the number of known candidates with neither a completed scan nor an explicit skip disposition.
 - `allDiscoveredFilesAccounted` is true only when every known candidate has a scanned-or-skipped disposition.
-- `fullScanCoverage` is true only when every known candidate was actually scanned, no candidate was skipped, and traversal reported no gaps.
+- `completionPercent` reaches 100 when every discovered candidate has a final disposition (scanned or explicitly skipped) and traversal has no gaps; it measures completion of the accessible inventory, not successful analysis.
+- `fullScanCoverage` is true when every known candidate has a scanned-or-skipped disposition and traversal reported no gaps. It does not mean every candidate was analyzed; use `scanCoveragePercent` and `skippedFiles` to show that distinction.
 
 The result preview remains bounded to 60 entries for memory safety; aggregate counters cover the full candidate batch. If traversal is truncated, permission is denied, a provider fails, or a safety cap is reached, the report remains incomplete even if all candidates already enumerated have been processed. Items outside the user-authorized Android scope cannot be enumerated or scanned.
 

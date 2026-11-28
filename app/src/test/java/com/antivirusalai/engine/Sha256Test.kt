@@ -20,4 +20,20 @@ class Sha256Test {
         assertEquals(actual.lowercase(), actual)
         assertTrue(actual.all { it in "0123456789abcdef" })
     }
+
+    @Test
+    fun hexEncodingPreservesLeadingZeroAndUnsignedBytes() {
+        assertEquals("000f80ff", Sha256.hex(byteArrayOf(0x00, 0x0f, 0x80.toByte(), 0xff.toByte())))
+    }
+
+    @Test
+    fun streamingDigestMatchesKnownVectorAcrossChunks() {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        digest.update("a".toByteArray(Charsets.UTF_8))
+        digest.update("bc".toByteArray(Charsets.UTF_8))
+        assertEquals(
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            Sha256.hex(digest.digest())
+        )
+    }
 }
